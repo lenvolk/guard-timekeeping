@@ -4,7 +4,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 // Renders the README diagrams with the Excalidraw library in headless Microsoft Edge.
-// Usage: npm install, then node render.mjs [architecture|deployment-stages|production-rbac]
+// Usage: npm install, then node render.mjs [architecture|deployment-stages|production-rbac|test-flow]
 const outDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../docs/diagrams');
 const only = process.argv[2];
 
@@ -40,40 +40,87 @@ const architecture = [
 
   box('browser', 40, 160, 170, 100, 'Browser\n(internet)', '#ffec99'),
 
-  zone('zapp', 260, 90, 580, 360, '#e7f5ff', '#1971c2'),
+  zone('zapp', 260, 90, 590, 560, '#e7f5ff', '#1971c2'),
   text('zappt', 280, 102, 'rg-<team>-app', 20, '#1971c2'),
   box('web', 290, 160, 240, 100, 'Web app\nUI + signature pad', '#a5d8ff'),
-  box('api', 570, 160, 240, 100, 'API app\nFastAPI', '#d0bfff'),
+  box('api', 570, 160, 250, 100, 'API app\nFastAPI\nmanaged identity', '#d0bfff', { fs: 18 }),
   box('appi', 290, 320, 240, 90, 'Application Insights\n+ Log Analytics', '#eebefa', { fs: 18 }),
-  box('mi', 570, 320, 240, 90, 'API managed identity\n(no passwords, no keys)', '#fff3bf', { fs: 18 }),
+  box('dns', 290, 470, 240, 120, 'Private DNS zone\nprivatelink.blob...\nstorage name -> 10.42.0.x', '#f8f9fa', { fs: 16 }),
 
-  zone('zdata', 1040, 90, 340, 360, '#ebfbee', '#2f9e44'),
+  zone('zvnet', 555, 300, 280, 330, '#f3f0ff', '#7048e8'),
+  text('zvnett', 575, 606, 'vnet-<team> 10.42.0.0/24', 14, '#7048e8'),
+  box('snet', 575, 350, 240, 90, 'snet-app\nAPI VNet integration', '#e5dbff', { fs: 18 }),
+  box('pe', 575, 510, 240, 90, 'snet-pe\nBlob private endpoint', '#e5dbff', { fs: 18 }),
+  arrow('a_dns', 530, 530, [[0, 0], [25, 0]], { dash: true, end: null, color: '#7048e8' }),
+  caption('l_dns', 290, 596, 240, 24, 'linked to the VNet', 14, '#7048e8'),
+
+  zone('zdata', 1040, 90, 340, 560, '#ebfbee', '#2f9e44'),
   text('zdatat', 1060, 102, 'rg-<team>-data', 20, '#2f9e44'),
   box('pg', 1070, 160, 280, 100, 'PostgreSQL B1ms\nEntra sign-in only', '#b2f2bb', { fs: 18 }),
-  box('st', 1070, 320, 280, 90, 'Storage account\nsignatures/*.png', '#c3fae8', { fs: 18 }),
+  box('st', 1070, 510, 280, 90, 'Storage account\nsignatures/*.png', '#c3fae8', { fs: 18 }),
 
   arrow('a_bw', 210, 210, [[0, 0], [80, 0]]),
-  caption('l_bw', 210, 178, 80, 24, 'HTTPS', 16),
+  caption('l_bw', 210, 186, 48, 20, 'HTTPS', 13),
   arrow('a_wa', 530, 210, [[0, 0], [40, 0]]),
-  arrow('a_ami', 690, 260, [[0, 0], [0, 60]], { dash: true, end: null, color: '#f08c00' }),
-  arrow('a_pg', 810, 210, [[0, 0], [260, 0]]),
-  caption('l_pg', 830, 166, 220, 40, 'SQL + token\nPostgreSQL admin', 14),
-  arrow('a_st', 810, 365, [[0, 0], [260, 0]]),
-  caption('l_st', 830, 321, 220, 40, 'writes PNGs\nBlob Data Contributor', 14),
+  arrow('a_snet', 695, 260, [[0, 0], [0, 90]], { color: '#7048e8' }),
+  arrow('a_pe', 695, 440, [[0, 0], [0, 70]], { color: '#7048e8' }),
+  arrow('a_pg', 820, 210, [[0, 0], [250, 0]]),
+  caption('l_pg', 850, 140, 180, 60, 'SQL + Entra token\nPostgreSQL admin\npublic endpoint', 14),
+  arrow('a_st', 815, 555, [[0, 0], [255, 0]], { color: '#7048e8' }),
+  caption('l_st', 840, 490, 210, 60, 'writes + reads PNGs\nBlob Data Contributor\nprivate IP only', 14, '#7048e8'),
 
-  box('runner', 1070, 530, 280, 80, 'Runner in Azure portal', '#ffec99', { fs: 18 }),
-  arrow('a_rs', 1210, 530, [[0, 0], [0, -120]]),
-  caption('l_rs', 1060, 466, 140, 30, 'Blob Data Reader', 14),
+  box('runner', 1070, 730, 280, 80, 'Workshop runner (you)\nin the Azure portal', '#ffec99', { fs: 18 }),
+  arrow('a_rs', 1210, 730, [[0, 0], [0, -130]], { dash: true, color: '#e03131' }),
+  caption('l_rs', 1215, 650, 190, 60, 'Blob Data Reader\nblocked if a policy turns\npublic access off', 14, '#e03131'),
 
-  box('prod', 40, 530, 800, 80, 'Production adds: VNet, private endpoints for the database, storage and API, private DNS, WAF', '#fff9db', { fs: 16, dash: true, stroke: '#f08c00' }),
-  caption('legend', 40, 640, 1340, 40, 'All endpoints are public for the workshop. Every service checks an Entra ID identity instead of a password or key.', 18, '#495057'),
+  box('prod', 40, 730, 980, 70, 'Production adds: private endpoints for PostgreSQL and the API, a WAF, and a deployment runner inside the VNet', '#fff9db', { fs: 16, dash: true, stroke: '#f08c00' }),
+  caption('legend', 40, 830, 1340, 50, 'The web app, API and PostgreSQL use public endpoints. PostgreSQL accepts Azure services only.\nBlob Storage is reached only through the private endpoint. Every service checks an Entra ID identity, never a password or key.', 16, '#495057'),
 ];
+
+// ---------- diagram 4: how to test (demo.md) ----------
+const SW = 230, SG = 50;
+const steps = [
+  ['s1', '1  Start shift\nJordan Avila\nwitness + signature', 'Shift started.'],
+  ['s2', '2  Take post\nLobby Desk\n(vacant)', 'Jordan: On post'],
+  ['s3', '3  Hand over\nto Marcus Ferrin,\nwho signs', 'Post handed over\nto the relief guard.'],
+  ['s4', '4  End shift\nJordan Avila\nsigns', 'Shift ended.'],
+  ['s5', '5  Check\nsupervisor board', 'Lobby Desk: Marcus,\nsignature thumbnails'],
+];
+const testFlow = [
+  text('title', 40, 0, 'How to test the app', 32),
+  box('w1', 40, 70, 420, 100, 'A  Automatic\ndeploy.ps1 S3 runs\nscripts\\Test-Workflow.ps1', '#d3f9d8', { fs: 18, stroke: '#2f9e44' }),
+  box('w2', 500, 70, 420, 100, 'B  Status page  /status\nAPI, database and storage\nall say ok', '#e7f5ff', { fs: 18, stroke: '#1971c2' }),
+  box('w3', 960, 70, 430, 100, 'C  By hand in a browser\nthe five steps below,\nRiverside Office Park', '#fff3bf', { fs: 18, stroke: '#f08c00' }),
+  caption('c_steps', 40, 200, 1350, 30, 'C: the guard walkthrough. You act as each guard by clicking their name. There is no sign-in.', 18),
+];
+steps.forEach(([id, label, see], i) => {
+  const x = 40 + i * (SW + SG);
+  testFlow.push(box(id, x, 245, SW, 110, label, i === 4 ? '#d0bfff' : '#ffec99', { fs: 18 }));
+  testFlow.push(caption(`${id}c`, x, 365, SW, 50, `You see: ${see}`, 15, '#2f9e44'));
+  if (i < steps.length - 1) testFlow.push(arrow(`as${i}`, x + SW, 300, [[0, 0], [SG, 0]]));
+});
+testFlow.push(
+  caption('c_flow', 40, 450, 1350, 30, 'What one signed step does behind the scenes', 18),
+  box('f_br', 40, 520, 210, 90, 'Your browser\nsignature pad', '#ffec99', { fs: 18 }),
+  box('f_web', 300, 520, 210, 90, 'Web app', '#a5d8ff', { fs: 18 }),
+  box('f_api', 560, 520, 210, 90, 'API app\nchecks the rules', '#d0bfff', { fs: 18 }),
+  box('f_pg', 860, 480, 300, 75, 'PostgreSQL\nevent row: who, when, what', '#b2f2bb', { fs: 16 }),
+  box('f_st', 860, 585, 300, 75, 'Storage, private endpoint\nsignature PNG', '#c3fae8', { fs: 16 }),
+  box('f_sb', 1210, 520, 180, 90, 'Supervisor board\nshows both', '#d0bfff', { fs: 16 }),
+  arrow('af1', 250, 565, [[0, 0], [50, 0]]),
+  arrow('af2', 510, 565, [[0, 0], [50, 0]]),
+  arrow('af3', 770, 565, [[0, 0], [45, 0], [45, -47], [90, -47]]),
+  arrow('af4', 770, 565, [[0, 0], [45, 0], [45, 57], [90, 57]]),
+  arrow('af5', 1160, 517, [[0, 0], [50, 30]], { dash: true }),
+  arrow('af6', 1160, 622, [[0, 0], [50, -30]], { dash: true }),
+  caption('c_rule', 40, 690, 1350, 40, 'A step the rules do not allow, such as ending a shift while still on a post, shows a message and saves nothing.', 16, '#495057'),
+);
 
 // ---------- diagram 2: deployment stages ----------
 const stages = [
   ['S0', 'Preflight', 'tools, sign-in,\nregion, quota, roles', '#e9ecef'],
   ['S1', 'Data tier', 'rg-data: PostgreSQL\n+ storage', '#b2f2bb'],
-  ['S2', 'App tier', 'rg-app: apps,\nidentity, roles', '#a5d8ff'],
+  ['S2', 'App tier', 'rg-app: apps, VNet,\nprivate endpoint, roles', '#a5d8ff'],
   ['S3', 'App code', 'zip deploy\n+ end-to-end checks', '#d0bfff'],
   ['S4', 'Cleanup', 'type team name\nnever in Autopilot', '#ffc9c9'],
 ];
@@ -108,7 +155,7 @@ const rbac = [
   caption('note', 40, 390, 1020, 50, 'Workshop shortcut: no network group yet, and one runner is Owner on the whole subscription.', 18, '#e03131'),
 ];
 
-const diagrams = { architecture, 'deployment-stages': deployment, 'production-rbac': rbac };
+const diagrams = { architecture, 'deployment-stages': deployment, 'production-rbac': rbac, 'test-flow': testFlow };
 
 // ---------- render in headless Edge with the real Excalidraw library ----------
 const browser = await chromium.launch({ channel: 'msedge', headless: true });

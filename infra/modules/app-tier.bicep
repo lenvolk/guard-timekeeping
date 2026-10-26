@@ -1,6 +1,7 @@
 // S2 resources in rg-<team>-app: the Linux App Service plan, the public web app
 // and the API app. The API has a system-assigned managed identity that signs in to
-// PostgreSQL and Blob Storage. The workshop uses public endpoints (no VNet).
+// PostgreSQL and Blob Storage. The API joins the VNet from network.bicep and reaches
+// Blob Storage through its private endpoint. PostgreSQL uses its public endpoint.
 
 @description('Azure region for every resource.')
 param location string
@@ -27,6 +28,9 @@ param postgresDatabase string
 param storageBlobUrl string
 
 param signatureContainer string
+
+@description('Resource ID of the subnet, delegated to Microsoft.Web/serverFarms, that the API joins.')
+param apiSubnetId string
 
 var startupCommand = 'gunicorn -w 2 -k uvicorn.workers.UvicornWorker -b 0.0.0.0:8000 main:app'
 var diagnosticLogCategories = [
@@ -69,6 +73,10 @@ resource api 'Microsoft.Web/sites@2024-11-01' = {
   properties: {
     serverFarmId: plan.id
     httpsOnly: true
+    // Only private-address traffic enters the VNet. The storage name resolves to the
+    // private endpoint through the linked private DNS zone. Other traffic, including
+    // PostgreSQL, keeps the default outbound path.
+    virtualNetworkSubnetId: apiSubnetId
     siteConfig: {
       linuxFxVersion: 'PYTHON|3.12'
       appCommandLine: startupCommand

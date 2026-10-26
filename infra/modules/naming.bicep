@@ -17,6 +17,11 @@ type resourceNamesType = {
   apiApp: string
   logAnalytics: string
   appInsights: string
+  vnet: string
+  nsg: string
+  appSubnet: string
+  privateEndpointSubnet: string
+  storagePrivateEndpoint: string
 }
 
 @export()
@@ -36,6 +41,11 @@ func resourceNames(team string, suffix string) resourceNamesType => {
   apiApp: 'app-${team}-api-${suffix}'
   logAnalytics: 'log-${team}'
   appInsights: 'appi-${team}'
+  vnet: 'vnet-${team}'
+  nsg: 'nsg-${team}'
+  appSubnet: 'snet-app'
+  privateEndpointSubnet: 'snet-pe'
+  storagePrivateEndpoint: 'pe-st${team}${suffix}-blob'
 }
 
 @export()

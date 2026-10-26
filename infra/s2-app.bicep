@@ -1,5 +1,6 @@
 // Stage S2: app tier. Creates rg-<team>-app with monitoring, the App Service plan,
-// the web app and the API app. Then, through a module scoped to rg-<team>-data,
+// the web app, the API app and a VNet with a private endpoint for the signature
+// storage account. Then, through a module scoped to rg-<team>-data,
 // makes the API's managed identity the PostgreSQL Entra administrator and creates
 // the two storage role assignments.
 targetScope = 'subscription'
@@ -63,6 +64,21 @@ module monitoring 'modules/monitoring.bicep' = {
   }
 }
 
+module network 'modules/network.bicep' = {
+  name: '${deployment().name}-network'
+  scope: appRg
+  params: {
+    location: location
+    tags: tags
+    vnetName: names.vnet
+    nsgName: names.nsg
+    appSubnetName: names.appSubnet
+    privateEndpointSubnetName: names.privateEndpointSubnet
+    storagePrivateEndpointName: names.storagePrivateEndpoint
+    storageAccountId: storage.id
+  }
+}
+
 module appTier 'modules/app-tier.bicep' = {
   name: '${deployment().name}-apps'
   scope: appRg
@@ -78,6 +94,7 @@ module appTier 'modules/app-tier.bicep' = {
     postgresDatabase: names.postgresDatabase
     storageBlobUrl: storage.properties.primaryEndpoints.blob
     signatureContainer: names.signatureContainer
+    apiSubnetId: network.outputs.appSubnetId
   }
 }
 
@@ -107,5 +124,8 @@ output postgresAdminName string = dataAccess.outputs.postgresAdminName
 output storageAccountName string = storage.name
 output storageAccountId string = storage.id
 output signatureContainerName string = names.signatureContainer
+output vnetName string = network.outputs.vnetName
+output storagePrivateEndpointName string = network.outputs.storagePrivateEndpointName
+output blobPrivateDnsZoneName string = network.outputs.blobPrivateDnsZoneName
 output appInsightsName string = monitoring.outputs.appInsightsName
 output logAnalyticsName string = monitoring.outputs.logAnalyticsName

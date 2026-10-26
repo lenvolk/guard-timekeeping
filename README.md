@@ -9,7 +9,7 @@ stores the signatures in Blob Storage. The app uses synthetic data only.
 
 ## What you deploy
 
-![Architecture: public web app and API in rg-app; PostgreSQL and a storage account in rg-data; the API's managed identity signs in to both](docs/diagrams/architecture.excalidraw.svg)
+![Architecture: public web app and API in rg-app; PostgreSQL and a storage account in rg-data; the API joins a VNet in rg-app and reaches storage through a private endpoint](docs/diagrams/architecture.excalidraw.svg)
 
 | Tier | Resource group | Azure service | How access works |
 |---|---|---|---|
@@ -17,10 +17,22 @@ stores the signatures in Blob Storage. The app uses synthetic data only.
 | API | `rg-<team>-app` | App Service, same plan | Public |
 | Database | `rg-<team>-data` | PostgreSQL Flexible Server, B1ms | Azure services only, Entra sign-in only |
 | Signatures | `rg-<team>-data` | Storage account, `signatures` container | Entra identities only, keys turned off |
+| Network | `rg-<team>-app` | VNet, blob private endpoint, private DNS zone | The API joins the VNet and reaches storage privately |
 
 The API's managed identity is the PostgreSQL admin and has the Storage Blob Data
-Contributor role. No password or storage key exists anywhere. Private networking
-is left for production.
+Contributor role. No password or storage key exists anywhere. The API reaches Blob
+Storage through a private endpoint, so the app still works when a subscription
+policy turns off public network access on storage accounts. Full private
+networking is left for production.
+
+The **runner** in the diagram is you: the account signed in to the Azure CLI that
+runs `deploy.ps1`. S2 gives that account Storage Blob Data Reader so you can open
+the signature PNGs in the Azure portal. Keys are turned off, so the portal uses
+your Entra sign-in and needs that role.
+
+> If a policy has turned off public network access, the portal cannot list the
+> `signatures` container from your laptop. Use the supervisor page to see the
+> signatures instead.
 
 ## How deployment runs
 
@@ -54,6 +66,10 @@ If a team falls behind, `.\deploy.ps1 -Team team01 -Mode Autopilot -StartAt S2`
 catches up from S2. For a hackathon, `.\scripts\Test-Prerequisites.ps1 -TeamCount 5`
 checks regional quota for five teams. Give each team its own `-Team` name.
 
+If the preflight says PostgreSQL does not accept new servers in your region, pick
+another region with `-Location`, for example `centralus` or `westus3`. Some
+subscriptions block new PostgreSQL servers in eastus2 and eastus.
+
 ## Prerequisites
 
 - Windows PowerShell 5.1 or PowerShell 7
@@ -72,8 +88,12 @@ Open the web URL that S3 prints. Pick a site and a guard.
 4. End the shift and sign.
 
 The supervisor page shows covered posts, the event history and signature
-thumbnails. In the Azure portal, open the storage account, then the `signatures`
-container, to see the same PNG files.
+thumbnails. If your subscription allows public access to storage, you can also
+open the storage account in the Azure portal, then the `signatures` container, to
+see the same PNG files.
+
+[demo.md](demo.md) walks through these steps one click at a time and explains what
+each one proves.
 
 ## Clean up
 
@@ -90,7 +110,7 @@ it. To run only the cleanup:
 
 This workshop takes shortcuts. Production needs at least:
 
-- a VNet with private endpoints for the database, storage and API
+- a VNet with private endpoints for the database and API (storage already has one)
 - scoped roles per resource group instead of one subscription Owner
 - Entra sign-in instead of picking a persona
 - legally approved e-signatures with retention and immutable storage
@@ -103,7 +123,8 @@ Section 11 of the [plan](plan.md#11-production-follow-up) has the full list.
 
 ## Diagrams
 
-The diagrams are `.excalidraw.svg` files. GitHub shows them as images, and the
+The diagrams are `.excalidraw.svg` files: architecture, deployment stages,
+production roles, and the [demo.md](demo.md) test flow. GitHub shows them as images, and the
 [Excalidraw VS Code extension](https://marketplace.visualstudio.com/items?itemName=pomdtr.excalidraw-editor)
 opens them for editing. To regenerate them from code, run `npm install` and
 `node render.mjs` in [tools/diagrams](tools/diagrams). This needs Node.js and

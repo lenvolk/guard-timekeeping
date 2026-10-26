@@ -32,7 +32,9 @@ session, each team picks one person to run a PowerShell script on a laptop. The
 script uses Bicep to deploy a three-tier timekeeping app: a web app, an API,
 PostgreSQL and a storage account for guard signatures.
 
-At the start the script asks for a deployment mode:
+The script first interviews the runner for the team name, subscription and region,
+and shows the resource names that the team name produces. After the runner confirms
+them, it shows a summary and asks for a deployment mode:
 
 - **Human in the loop** (default). After each stage the script prints what it
   deployed and the check results, then waits for the runner to approve the next
@@ -41,8 +43,10 @@ At the start the script asks for a deployment mode:
   pausing. It still stops on any failure.
 
 The workshop uses public Azure endpoints with Entra ID identities instead of
-passwords or keys. Private networking is a production change, documented but not
-built.
+passwords or keys. The one exception is Blob Storage: the API reaches it through a
+private endpoint, because subscription policies often turn off public network
+access on storage accounts. Full private networking is a production change,
+documented but not built.
 
 The app is a proof of concept for a generic security-guard workforce. It uses
 synthetic data only. It contains no customer names, customer documents or real
@@ -66,7 +70,7 @@ Attendees learn:
 | R2 | Bicep provisions all resources. No AKS. Attendees do not need GitHub Copilot. |
 | R3 | DEV proof of concept with prepopulated synthetic data. |
 | R4 | The web app is public. Backend services use public endpoints and accept only Entra ID identities, no passwords or keys. Private networking is documented as a production change. |
-| R5 | At the start, the runner picks Human in the loop or Autopilot. Human in the loop pauses after each stage for approval. Autopilot runs every deployment stage without pausing. |
+| R5 | After the runner answers the setup questions and confirms the resource names, the runner picks Human in the loop or Autopilot. Human in the loop pauses after each stage for approval. Autopilot runs every deployment stage without pausing. |
 | R6 | One person per team runs the script on a local laptop. A prerequisite script checks the tools first. |
 | R7 | The README gives step-by-step instructions with Excalidraw diagrams and follows the unslop rules. |
 | R8 | Documentation lists what production needs, including private networking and RBAC per resource group. The workshop does not build it. |
@@ -79,13 +83,13 @@ Attendees learn:
 | ID | Decision | Reason |
 |---|---|---|
 | D01 | Three tiers: a public web app, an API app, and a data tier with PostgreSQL Flexible Server and a storage account. | Shows a multi-tier app without extra services. |
-| D02 | No VNet, private endpoints or private DNS in the workshop. PostgreSQL allows connections from Azure services only. The storage account allows public network access but rejects keys and anonymous reads. The API is reachable from the internet. | Peer review and the sponsor chose a working demo over network hardening. Production adds private networking (section 11). |
+| D02 | No private networking for PostgreSQL or the API. PostgreSQL allows connections from Azure services only. The API is reachable from the internet. Blob Storage is the exception: S2 adds a small VNet in `rg-app`, a blob private endpoint with its private DNS zone, and VNet integration for the API. The storage account still rejects keys and anonymous reads. | Peer review and the sponsor chose a working demo over network hardening. A smoke test found a subscription policy that turns off public network access on storage accounts, which broke signatures, so storage got a private endpoint. Production adds the rest of private networking (section 11). |
 | D03 | The API's system-assigned managed identity is the PostgreSQL Entra administrator. Password authentication is off. | No database password exists. Production uses a least-privilege database role. |
 | D04 | The storage account has shared key access and anonymous blob access turned off. Bicep grants the API's identity **Storage Blob Data Contributor** on the account, and the runner **Storage Blob Data Reader** so attendees can view signatures in the portal. | No storage key exists. Attendees see a real role assignment. |
 | D05 | Because of D04, the runner needs **Owner** on the subscription, or **Contributor** plus **Role Based Access Control Administrator**. S0 checks and warns. | Contributor alone cannot create role assignments. |
 | D06 | Each team gets two resource groups: `rg-<team>-data` (PostgreSQL, storage) and `rg-<team>-app` (App Service, monitoring). | Shows how production splits ownership. Production adds a network group. |
 | D07 | On startup, the API creates its tables and loads seed data if the database is empty. No migration tool. | Keeps S3 to one code deployment. Production adds versioned migrations. |
-| D08 | `deploy.ps1` asks for a mode at the start, or takes `-Mode Interactive` or `-Mode Autopilot`. Human in the loop prompts `Continue? (y/n)` after S0, S1, S2 and S3. Autopilot runs S0 to S3 without prompts. Cleanup (S4) never runs in Autopilot and always needs the typed team name. `-StartAt` resumes from a stage in either mode. | Gives a learning checkpoint per stage, or a single command for teams that fall behind. A checkpoint, not a security control. |
+| D08 | `deploy.ps1` first asks for the team name, subscription and region, previews the resource names, then shows a summary and asks for the mode last, unless `-Mode Interactive` or `-Mode Autopilot` is passed. The mode menu also offers Cancel. Human in the loop prompts `Continue? (y/n)` after S0, S1, S2 and S3. Autopilot runs S0 to S3 without prompts. Cleanup (S4) never runs in Autopilot and always needs the typed team name. `-StartAt` resumes from a stage in either mode. | The runner sees every setting before choosing how to run. Gives a learning checkpoint per stage, or a single command for teams that fall behind. A checkpoint, not a security control. |
 | D09 | The scripts run in Windows PowerShell 5.1 and PowerShell 7. The only required tool is the Azure CLI with Bicep. | App Service builds the Python code, so laptops need no Python or Docker. |
 | D10 | Anonymous persona selection, with a "synthetic data" banner on every page. | No sign-in setup. Production adds Entra sign-in. |
 | D11 | Python 3.12. FastAPI for the API. FastAPI with Jinja2 templates for the web app, which calls the API from the server. The signature pad is a small plain JavaScript file using an HTML canvas and pointer events, so it works with a mouse, pen or touch. The supervisor page reloads every 10 seconds. | One language and no JavaScript build step. |
@@ -133,7 +137,7 @@ documentation and Bicep schemas while building.
 
 | Topic | Note |
 |---|---|
-| Naming | Every template computes `suffix = take(uniqueString(subscription().id, team), 5)` the same way. Names: `psql-<team>-<suffix>`, `st<team><suffix>` (storage: lowercase letters and digits only, 24 characters at most), `asp-<team>`, `app-<team>-web-<suffix>`, `app-<team>-api-<suffix>`, `log-<team>`, `appi-<team>`. |
+| Naming | Every template computes `suffix = take(uniqueString(subscription().id, team), 5)` the same way. Names: `psql-<team>-<suffix>`, `st<team><suffix>` (storage: lowercase letters and digits only, 24 characters at most), `asp-<team>`, `app-<team>-web-<suffix>`, `app-<team>-api-<suffix>`, `log-<team>`, `appi-<team>`. `deploy.ps1` previews the names before deploying by running `az bicep build-params` on `infra/names.bicepparam`, which calls the same naming function. Nothing is deployed. S1 and S2 check that the deployed names match the preview. |
 | Deployments | `az deployment sub create --name tk-<team>-s<n> --location <loc>`. Each template outputs the names and hostnames the checks need. The script reads them with `az deployment sub show`. |
 | PostgreSQL authentication | `authConfig`: Entra authentication enabled, password authentication disabled, so no administrator password parameter. S2 adds a `flexibleServers/administrators` child named with the API identity's object ID, `principalType: 'ServicePrincipal'` and `principalName` set to the API app name. The API's `PGUSER` is that app name. |
 | PostgreSQL network | `network.publicNetworkAccess: 'Enabled'` and one firewall rule named `AllowAllAzureServicesAndResourcesWithinAzureIps` with start and end IP `0.0.0.0`. No rule for the laptop. |
@@ -222,26 +226,51 @@ walkthrough in S3 is the only automated app test.
 
 | Parameter | Script | Suggested default | Notes |
 |---|---|---|---|
-| `-Mode` | `deploy.ps1` | `Interactive` | `Interactive` (human in the loop) or `Autopilot`. Not saved, so each run asks again. |
+| `-Mode` | `deploy.ps1` | `Interactive` | `Interactive` (human in the loop) or `Autopilot`. Skips the mode question. Not saved, so each run asks again. |
 | `-Team` | `deploy.ps1` | `team01` | Lowercase letters and digits, 3 to 10 characters. Used in resource group and resource names. |
 | `-SubscriptionId` | both | The current `az account show` subscription | The script prints the name and ID before using it. |
 | `-Location` | both | `eastus2` | S0 checks that the region offers PostgreSQL B1ms and App Service B1. |
 | `-TeamCount` | `Test-Prerequisites.ps1` | `1` | The facilitator sets the hackathon size. The script checks regional quota for that many teams. |
 | `-StartAt` | `deploy.ps1` | `S0` | Resumes from a later stage. `-StartAt S4` runs cleanup only. |
 
-The script first asks:
+The script starts with a short interview. A parameter passed on the command line
+skips its question, and Enter accepts the default in brackets:
 
 ```text
-Deployment mode
+1. Team name (3 to 10 lowercase letters and digits) [team01]:
+2. Subscription ID [<current subscription>]:
+3. Region [eastus2]:
+
+Resource names
+  Data resource group      rg-team01-data
+    PostgreSQL server      psql-team01-<suffix>
+    Storage account        stteam01<suffix>
+  App resource group       rg-team01-app
+    Web app                app-team01-web-<suffix>
+    ...
+4. Use these names? (Y/n):
+```
+
+The script checks the region name before previewing. Answering `n` to question 4
+goes back to the team name, because every name comes from it. When `-Team` is
+passed, the script shows the names without asking. It then prints a summary of the
+answers and asks for the mode last:
+
+```text
+How do you want to run the deployment?
   [1] Human in the loop: pause after each stage for your approval (default)
   [2] Autopilot: deploy everything, stop only on failure
+  [3] Cancel: exit without changing anything
 Choose [1]:
 ```
 
-When another parameter is missing, the script prompts with the default in
-brackets, for example `Region [eastus2]:`. It saves the team, subscription and
-region to `.deploy/<team>.json`, which git ignores, so a resumed run with `-Team`
-uses the same values.
+Cancel exits without deploying or saving anything. Otherwise the script saves the
+team, subscription, region and previewed names to `.deploy/<team>.json`, which git
+ignores. A resumed run with `-Team` offers the saved subscription and region as the
+defaults. Resume commands that the script prints include `-Team`, `-SubscriptionId`,
+`-Location` and `-Mode`, so a resumed run asks no setup questions. `-StartAt S4`
+asks only for the team and subscription, skips the mode question, and goes straight
+to the typed-name confirmation.
 
 For each stage, `deploy.ps1` prints the stage name and target resource group,
 deploys, runs the stage checks and prints the results. In Human in the loop mode
@@ -308,6 +337,7 @@ scripts/Test-Prerequisites.ps1
 scripts/Test-Workflow.ps1
 infra/s1-data.bicep
 infra/s2-app.bicep
+infra/names.bicep, infra/names.bicepparam   name preview, never deployed
 infra/modules/
 src/api/        FastAPI app, schema.sql, seed data, requirements.txt
 src/web/        FastAPI + Jinja2 app, templates, signature pad JS, CSS, requirements.txt
@@ -329,7 +359,7 @@ approval.
 | Gate | Work | Approval evidence |
 |---|---|---|
 | G0 | `LICENSE`, `.gitignore`, the README and three diagrams already exist. Update `docs/decisions/0001-dev-workshop-boundaries.md` and `docs/glossary.md` to match this plan. | Search for customer names and customer systems finds nothing. |
-| G1 | `Test-Prerequisites.ps1` and `deploy.ps1` with the mode prompt, parameter prompts, defaults, the `.deploy/<team>.json` settings file, the quota and role checks, S0, the stage loop and S4. | S0 output with no parameters passed. Sponsor confirms the subscription and region. `n` stops the script. Autopilot does not prompt. |
+| G1 | `Test-Prerequisites.ps1` and `deploy.ps1` with the setup interview, name preview, mode prompt, defaults, the `.deploy/<team>.json` settings file, the quota and role checks, S0, the stage loop and S4. | S0 output with no parameters passed. Sponsor confirms the subscription, region and resource names. `n` stops the script. Autopilot does not prompt after the mode is chosen. |
 | G2 | S1 Bicep. | S1 checks, portal view and measured time. |
 | G3 | S2 Bicep. | S2 checks and portal view of the role assignments. |
 | G4 | API and web code, S3, `Test-Workflow.ps1`. | S3 checks and a manual walkthrough together, including signatures in the portal. |
@@ -368,7 +398,7 @@ Gate G5 turns this table into `docs/production-readiness.md`.
 
 | Area | Workshop shortcut | Production change |
 |---|---|---|
-| Network | Public endpoints. PostgreSQL allows any Azure service. The API is open to the internet. | VNet with App Service integration, private endpoints for PostgreSQL, Storage and the API, private DNS, and a deployment runner inside the VNet. |
+| Network | Public endpoints for PostgreSQL and the API. PostgreSQL allows any Azure service. The API is open to the internet. Only Blob Storage has a private endpoint. | VNet with App Service integration for both apps, private endpoints for PostgreSQL and the API, private DNS, and a deployment runner inside the VNet. |
 | Access control | One runner with Owner on the subscription. | RBAC per resource group: network team owns `rg-network`, DBAs own `rg-data`, app team owns `rg-app`. Deploy with scoped identities. |
 | User identity | Anonymous personas. | Entra sign-in, server-enforced roles, site boundaries. |
 | Ingress | App Service default domain. | Front Door or Application Gateway with WAF. |

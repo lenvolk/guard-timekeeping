@@ -11,20 +11,28 @@
     S3  Code: zips src/web and src/api, deploys them and tests the running app.
     S4  Cleanup: deletes the team's two resource groups.
 
-    The script first asks for a deployment mode:
-      Human in the loop (Interactive)  Pauses after each stage for your approval.
-      Autopilot                        Runs S0 to S3 without pausing and stops on any failure.
+    The script starts with a short interview. Parameters passed on the command line
+    skip their question, and Enter accepts the default in brackets:
+      1. Team name. Every resource name is built from it.
+      2. Subscription.
+      3. Region.
+      4. Resource names. The script shows the names the team name produces and asks
+         you to confirm them. Answer n to pick a different team name. When -Team is
+         passed, the names are shown without the question.
+    It then shows a summary and asks how to run:
+      [1] Human in the loop  Pauses after each stage for your approval.
+      [2] Autopilot          Runs S0 to S3 without pausing and stops on any failure.
+      [3] Cancel             Exits without changing anything.
     Cleanup (S4) never runs in Autopilot and always needs the typed team name.
 
-    In Human in the loop mode, missing parameters are prompted for and Enter accepts
-    the default in brackets. In Autopilot mode, missing parameters take the saved or
-    default values without prompting. The team, subscription and region are saved to
-    .deploy/<team>.json (ignored by git), so a resumed run with -Team uses the same values.
+    The answers are saved to .deploy/<team>.json (ignored by git). A resumed run with
+    -Team offers the saved subscription and region as the defaults.
 
     Runs in Windows PowerShell 5.1 and PowerShell 7. Needs only the Azure CLI with Bicep.
 
 .PARAMETER Mode
-    Interactive (human in the loop) or Autopilot. Not saved, so each run asks again.
+    Interactive (human in the loop) or Autopilot. Skips the mode question. Not saved,
+    so each run asks again.
 
 .PARAMETER Team
     Team name: 3 to 10 lowercase letters and digits. Default: team01.
@@ -42,7 +50,7 @@
     .\deploy.ps1
 
 .EXAMPLE
-    .\deploy.ps1 -Mode Autopilot -Team team03
+    .\deploy.ps1 -Team team03 -Location eastus2 -Mode Autopilot
 
 .EXAMPLE
     .\deploy.ps1 -Team team03 -StartAt S4
@@ -82,6 +90,7 @@ $script:StageFailures = 0
 $script:CurrentStage = ''
 $script:CheckLog = New-Object System.Collections.ArrayList
 $script:WebUrl = ''
+$script:Names = $null
 
 # --- Output helpers ---------------------------------------------------------------
 
@@ -144,28 +153,91 @@ function Write-RunSummary {
 
 function Read-Value {
     param([string]$Prompt, [string]$Default)
-    if ($Mode -eq 'Autopilot') {
-        Write-Host ('{0}: {1} (Autopilot uses the default)' -f $Prompt, $Default)
-        return $Default
-    }
     $answer = Read-Host ('{0} [{1}]' -f $Prompt, $Default)
     if ([string]::IsNullOrWhiteSpace($answer)) { return $Default }
     return $answer.Trim()
 }
 
+function Read-YesNo {
+    param([string]$Prompt, [bool]$Default = $true)
+    $hint = if ($Default) { 'Y/n' } else { 'y/N' }
+    while ($true) {
+        $answer = "$(Read-Host ('{0} ({1})' -f $Prompt, $hint))".Trim()
+        if ($answer -eq '') { return $Default }
+        if ($answer -match '^(y|yes)$') { return $true }
+        if ($answer -match '^(n|no)$') { return $false }
+        Write-Host 'Type y or n.'
+    }
+}
+
 function Read-Mode {
-    Write-Host 'Deployment mode'
+    Write-Host ''
+    Write-Host 'How do you want to run the deployment?' -ForegroundColor Cyan
     Write-Host '  [1] Human in the loop: pause after each stage for your approval (default)'
     Write-Host '  [2] Autopilot: deploy everything, stop only on failure'
+    Write-Host '  [3] Cancel: exit without changing anything'
     while ($true) {
         $answer = "$(Read-Host 'Choose [1]')".Trim()
         switch ($answer) {
             '' { return 'Interactive' }
             '1' { return 'Interactive' }
             '2' { return 'Autopilot' }
+            '3' { return 'Cancel' }
         }
-        Write-Host 'Type 1 or 2.'
+        Write-Host 'Type 1, 2 or 3.'
     }
+}
+
+# Switches the Azure CLI to the subscription and returns its details, or $null.
+function Select-Subscription {
+    param([string]$Value)
+    try {
+        Invoke-Az account set --subscription $Value | Out-Null
+        return (Invoke-AzJson account show -o json)
+    }
+    catch {
+        Write-Host ('Cannot use subscription "{0}". Check the ID and your access.' -f $Value) -ForegroundColor Yellow
+        return $null
+    }
+}
+
+# Builds infra/names.bicepparam, which calls the same naming function as the stage
+# templates. Nothing is deployed. Takes a few seconds.
+function Get-ResourceNamePreview {
+    param([string]$TeamName, [string]$Subscription)
+    $env:TK_TEAM = $TeamName
+    $env:TK_SUBSCRIPTION_ID = $Subscription
+    try {
+        $built = Invoke-AzJson bicep build-params --file (Join-Path $RepoRoot 'infra\names.bicepparam') --stdout
+    }
+    finally {
+        Remove-Item Env:TK_TEAM, Env:TK_SUBSCRIPTION_ID -ErrorAction SilentlyContinue
+    }
+    return ($built.parametersJson | ConvertFrom-Json).parameters.names.value
+}
+
+function Show-ResourceNames {
+    param($Names)
+    $rows = @(
+        @('Data resource group', $Names.dataRg),
+        @('  PostgreSQL server', $Names.postgresServer),
+        @('  Database', $Names.postgresDatabase),
+        @('  Storage account', $Names.storageAccount),
+        @('  Signature container', $Names.signatureContainer),
+        @('App resource group', $Names.appRg),
+        @('  App Service plan', $Names.appServicePlan),
+        @('  Web app', $Names.webApp),
+        @('  API app', $Names.apiApp),
+        @('  Log Analytics', $Names.logAnalytics),
+        @('  Application Insights', $Names.appInsights),
+        @('  Virtual network', $Names.vnet),
+        @('  Blob private endpoint', $Names.storagePrivateEndpoint)
+    )
+    Write-Host ''
+    Write-Host 'Resource names' -ForegroundColor Cyan
+    foreach ($row in $rows) { Write-Host ('  {0,-24} {1}' -f $row[0], $row[1]) }
+    Write-Host '  The 5-character ending comes from the subscription and team name, so it is the same on every run.' -ForegroundColor Gray
+    Write-Host '  It keeps the PostgreSQL, storage and app names unique across Azure.' -ForegroundColor Gray
 }
 
 function Confirm-Continue {
@@ -182,8 +254,9 @@ function Confirm-Continue {
 
 function Get-ResumeCommand {
     param([string]$Stage)
-    if ($Stage -eq 'S4') { return ('.\deploy.ps1 -Team {0} -StartAt S4' -f $Team) }
-    return ('.\deploy.ps1 -Mode {0} -Team {1} -StartAt {2}' -f $Mode, $Team, $Stage)
+    $common = '-Team {0} -SubscriptionId {1} -Location {2}' -f $Team, $SubscriptionId, $Location
+    if ($Stage -eq 'S4') { return ('.\deploy.ps1 {0} -StartAt S4' -f $common) }
+    return ('.\deploy.ps1 -Mode {0} {1} -StartAt {2}' -f $Mode, $common, $Stage)
 }
 
 # --- Azure CLI helpers --------------------------------------------------------------
@@ -344,9 +417,10 @@ function Save-Settings {
         team           = $Team
         subscriptionId = $SubscriptionId
         location       = $Location
+        names          = $script:Names
         savedAt        = (Get-Date).ToString('s')
     }
-    $settings | ConvertTo-Json | Set-Content -Path (Get-SettingsPath) -Encoding UTF8
+    $settings | ConvertTo-Json -Depth 4 | Set-Content -Path (Get-SettingsPath) -Encoding UTF8
 }
 
 # --- Zip packaging --------------------------------------------------------------------------
@@ -417,6 +491,10 @@ function Invoke-S1 {
 
     $container = Invoke-AzJson storage container-rm show --resource-group $o.dataResourceGroup --storage-account $o.storageAccountName --name $o.signatureContainerName -o json
     Write-Check ('Container {0}' -f $o.signatureContainerName) ($container -and $container.publicAccess -eq 'None') ('public access {0}' -f $container.publicAccess)
+    if ($script:Names) {
+        $match = ($o.postgresServerName -eq $script:Names.postgresServer) -and ($o.storageAccountName -eq $script:Names.storageAccount)
+        Write-Check 'Deployed names match the preview' $match ('{0}, {1}' -f $o.postgresServerName, $o.storageAccountName)
+    }
     Complete-StageChecks 'S1'
 }
 
@@ -451,8 +529,23 @@ function Invoke-S2 {
     Write-Check 'Role assignment: API identity, Storage Blob Data Contributor' ([bool]$apiRole) $o.storageAccountName
     Write-Check 'Role assignment: runner, Storage Blob Data Reader' ([bool]$runnerRole) $o.storageAccountName
 
+    $endpoint = Invoke-AzJson network private-endpoint show --resource-group $o.appResourceGroup --name $o.storagePrivateEndpointName -o json
+    $connectionState = @($endpoint.privateLinkServiceConnections)[0].privateLinkServiceConnectionState.status
+    Write-Check ('Storage private endpoint {0}' -f $o.storagePrivateEndpointName) ($endpoint.provisioningState -eq 'Succeeded' -and $connectionState -eq 'Approved') ('{0}, connection {1}' -f $endpoint.provisioningState, $connectionState)
+    $records = @(Invoke-AzJson network private-dns record-set a list --resource-group $o.appResourceGroup --zone-name $o.blobPrivateDnsZoneName -o json)
+    $record = $records | Where-Object { $_.name -eq $o.storageAccountName } | Select-Object -First 1
+    $privateIp = @($record.aRecords)[0].ipv4Address
+    Write-Check ('Private DNS {0}.{1}' -f $o.storageAccountName, $o.blobPrivateDnsZoneName) ([bool]$privateIp) $privateIp
+    $apiSite = Get-ArmResource ('{0}/providers/Microsoft.Web/sites/{1}' -f $appGroupId, $o.apiAppName) $WebApiVersion
+    $apiSubnet = "$($apiSite.properties.virtualNetworkSubnetId)"
+    Write-Check 'API VNet integration' ($apiSubnet -match ('/virtualNetworks/{0}/' -f [regex]::Escape($o.vnetName))) ($apiSubnet -replace '^.*/virtualNetworks/', '')
+
     $insights = Invoke-AzJson resource show --resource-group $o.appResourceGroup --name $o.appInsightsName --resource-type Microsoft.Insights/components -o json
     Write-Check ('Application Insights {0}' -f $o.appInsightsName) ($insights.properties.provisioningState -eq 'Succeeded') $insights.properties.provisioningState
+    if ($script:Names) {
+        $match = ($o.webAppName -eq $script:Names.webApp) -and ($o.apiAppName -eq $script:Names.apiApp)
+        Write-Check 'Deployed names match the preview' $match ('{0}, {1}' -f $o.webAppName, $o.apiAppName)
+    }
 
     Write-Info ('Web app: {0} (no code yet, S3 deploys it)' -f $script:WebUrl)
     Write-Info ('API app: https://{0}' -f $o.apiHostName)
@@ -470,10 +563,13 @@ function Invoke-S3 {
     New-DeploymentZip -SourceDir (Join-Path $RepoRoot 'src\api') -ZipPath $apiZip
     New-DeploymentZip -SourceDir (Join-Path $RepoRoot 'src\web') -ZipPath $webZip
 
+    # --track-status false: before S3 the apps have no code, so their containers crash-loop
+    # and App Service can block cold starts. The CLI's runtime tracking then reports that stale
+    # failure or hangs. The /healthz and /status polling below checks startup instead.
     Write-Info ('Deploying the API to {0}. App Service installs requirements.txt, which takes a few minutes.' -f $o.apiAppName)
-    Invoke-AzLive webapp deploy --resource-group $o.appResourceGroup --name $o.apiAppName --src-path $apiZip --type zip --only-show-errors --output none
+    Invoke-AzLive webapp deploy --resource-group $o.appResourceGroup --name $o.apiAppName --src-path $apiZip --type zip --track-status false --only-show-errors --output none
     Write-Info ('Deploying the web app to {0}.' -f $o.webAppName)
-    Invoke-AzLive webapp deploy --resource-group $o.appResourceGroup --name $o.webAppName --src-path $webZip --type zip --only-show-errors --output none
+    Invoke-AzLive webapp deploy --resource-group $o.appResourceGroup --name $o.webAppName --src-path $webZip --type zip --track-status false --only-show-errors --output none
 
     Write-Info 'Waiting for both apps to start and the API to create and seed the tables.'
     $deadline = (Get-Date).AddMinutes(10)
@@ -584,47 +680,24 @@ function Invoke-S4 {
     return $true
 }
 
-# --- Main ---------------------------------------------------------------------------------
+# --- Main: interview ---------------------------------------------------------------------
 
 Write-Host ''
 Write-Host 'Timekeeping workshop deployment' -ForegroundColor Cyan
+Write-Host 'Answer a few questions. Press Enter to accept the value in brackets.'
 Write-Host ''
 
 $StartAt = $StartAt.ToUpperInvariant()
-if ($Mode -eq 'Autopilot' -and $StartAt -eq 'S4') {
+$CleanupOnly = ($StartAt -eq 'S4')
+if ($Mode -eq 'Autopilot' -and $CleanupOnly) {
     Write-Host 'Cleanup (S4) never runs in Autopilot. Run it without -Mode:' -ForegroundColor Red
     Write-Host '  .\deploy.ps1 -Team <team> -StartAt S4'
     exit 1
 }
-if (-not $Mode) {
-    # Cleanup alone has no stages to approve, so the mode does not matter.
-    if ($StartAt -eq 'S4') { $Mode = 'Interactive' } else { $Mode = Read-Mode }
-}
-$ModeLabel = if ($Mode -eq 'Autopilot') { 'Autopilot' } else { 'Human in the loop' }
-Write-Host ''
 
 if (-not (Get-Command az -ErrorAction SilentlyContinue)) {
     Write-Host 'Azure CLI not found. Run scripts\Test-Prerequisites.ps1 for help.' -ForegroundColor Red
     exit 1
-}
-
-if ($Team) {
-    $Team = $Team.Trim().ToLowerInvariant()
-    if (-not (Test-TeamName $Team)) {
-        Write-Host ('Team name "{0}" must be 3 to 10 lowercase letters and digits.' -f $Team) -ForegroundColor Red
-        exit 1
-    }
-}
-else {
-    do {
-        $Team = (Read-Value 'Team name' $DefaultTeam).ToLowerInvariant()
-        if (-not (Test-TeamName $Team)) { Write-Host 'Use 3 to 10 lowercase letters and digits, for example team01.' }
-    } until (Test-TeamName $Team)
-}
-
-$saved = Read-Settings
-if ($saved) {
-    Write-Host ('Using saved settings from .deploy\{0}.json' -f $Team)
 }
 
 try {
@@ -635,41 +708,103 @@ catch {
     exit 1
 }
 
-if (-not $SubscriptionId) {
-    if ($saved -and $saved.subscriptionId) {
-        $SubscriptionId = $saved.subscriptionId
+if ($Team) {
+    $Team = $Team.Trim().ToLowerInvariant()
+    if (-not (Test-TeamName $Team)) {
+        Write-Host ('Team name "{0}" must be 3 to 10 lowercase letters and digits.' -f $Team) -ForegroundColor Red
+        exit 1
+    }
+}
+if ($Location) { $Location = $Location.Trim().ToLowerInvariant() }
+# A team name from the command line means the names are already decided.
+$teamFromParameter = [bool]$Team
+
+$namesConfirmed = $false
+while (-not $namesConfirmed) {
+    # 1. Team name
+    if (-not $Team) {
+        do {
+            $Team = (Read-Value '1. Team name (3 to 10 lowercase letters and digits)' $DefaultTeam).ToLowerInvariant()
+            if (-not (Test-TeamName $Team)) { Write-Host 'Use 3 to 10 lowercase letters and digits, for example team01.' }
+        } until (Test-TeamName $Team)
+    }
+    $saved = Read-Settings
+    if ($saved) {
+        Write-Host ('   Found saved answers for {0} in .deploy\{0}.json. They are the defaults below.' -f $Team) -ForegroundColor Gray
+    }
+
+    # 2. Subscription
+    if (-not $SubscriptionId) {
+        $defaultSubscription = $account.id
+        if ($saved -and $saved.subscriptionId) { $defaultSubscription = $saved.subscriptionId }
+        Write-Host ('   Signed in as {0}. Current subscription: {1} ({2})' -f $account.user.name, $account.name, $account.id) -ForegroundColor Gray
+        do {
+            $selected = Select-Subscription (Read-Value '2. Subscription ID' $defaultSubscription)
+        } until ($selected)
     }
     else {
-        Write-Host ('Current subscription: {0} ({1})' -f $account.name, $account.id)
-        $SubscriptionId = Read-Value 'Subscription ID' $account.id
+        $selected = Select-Subscription $SubscriptionId
+        if (-not $selected) { exit 1 }
+    }
+    $account = $selected
+    $SubscriptionId = $account.id
+    Write-Host ('   Using {0} ({1})' -f $account.name, $account.id) -ForegroundColor Gray
+
+    # 3. Region. Cleanup does not need one.
+    if ($CleanupOnly) {
+        if (-not $Location) {
+            $Location = $DefaultLocation
+            if ($saved -and $saved.location) { $Location = $saved.location }
+        }
+    }
+    else {
+        $regionNames = @(Invoke-AzJson account list-locations --query '[].name' -o json)
+        if ($Location -and $regionNames -notcontains $Location) {
+            Write-Host ('"{0}" is not a region name. Examples: eastus2, centralus, westus3.' -f $Location) -ForegroundColor Red
+            exit 1
+        }
+        if (-not $Location) {
+            $defaultLocation = $DefaultLocation
+            if ($saved -and $saved.location) { $defaultLocation = $saved.location }
+            do {
+                $Location = (Read-Value '3. Region' $defaultLocation).ToLowerInvariant()
+                $locationValid = $regionNames -contains $Location
+                if (-not $locationValid) { Write-Host ('"{0}" is not a region name. Examples: eastus2, centralus, westus3.' -f $Location) }
+            } until ($locationValid)
+        }
+    }
+    if ($saved -and $saved.location -and $saved.location -ne $Location) {
+        Write-Host ('   Warning: {0} was deployed to {1} before. Resource groups cannot move to {2}.' -f $Team, $saved.location, $Location) -ForegroundColor Yellow
+    }
+
+    # 4. Resource names. Cleanup works on the two group names only.
+    if ($CleanupOnly) {
+        $namesConfirmed = $true
+        continue
+    }
+    Write-Host ''
+    Write-Host '   Working out the resource names. This takes a few seconds...' -ForegroundColor Gray
+    try {
+        $script:Names = Get-ResourceNamePreview $Team $SubscriptionId
+    }
+    catch {
+        Write-Host ('Could not preview the resource names: {0}' -f $_.Exception.Message) -ForegroundColor Red
+        Write-Host 'Run scripts\Test-Prerequisites.ps1 to check the Azure CLI and Bicep.'
+        exit 1
+    }
+    Show-ResourceNames $script:Names
+    Write-Host ''
+    if ($teamFromParameter) {
+        $namesConfirmed = $true
+    }
+    elseif (Read-YesNo '4. Use these names?') {
+        $namesConfirmed = $true
+    }
+    else {
+        Write-Host '   The names come from the team name. Pick a different team name.' -ForegroundColor Gray
+        $Team = ''
     }
 }
-try {
-    Invoke-Az account set --subscription $SubscriptionId | Out-Null
-    $account = Invoke-AzJson account show -o json
-}
-catch {
-    Write-Host ('Cannot use subscription {0}: {1}' -f $SubscriptionId, $_.Exception.Message) -ForegroundColor Red
-    exit 1
-}
-$SubscriptionId = $account.id
-
-if (-not $Location) {
-    if ($saved -and $saved.location) { $Location = $saved.location } else { $Location = Read-Value 'Region' $DefaultLocation }
-}
-$Location = $Location.Trim().ToLowerInvariant()
-if ($saved -and $saved.location -and $saved.location -ne $Location) {
-    Write-Host ('Warning: {0} was deployed to {1} before. Resource groups cannot move to {2}.' -f $Team, $saved.location, $Location) -ForegroundColor Yellow
-}
-
-Save-Settings
-
-Write-Host ''
-Write-Host ('Mode:         {0}' -f $ModeLabel)
-Write-Host ('Team:         {0}' -f $Team)
-Write-Host ('Subscription: {0} ({1})' -f $account.name, $account.id)
-Write-Host ('Region:       {0}' -f $Location)
-Write-Host ('Settings:     .deploy\{0}.json' -f $Team)
 
 $targets = @{
     S0 = 'none, checks only'
@@ -678,6 +813,35 @@ $targets = @{
     S3 = 'rg-{0}-app' -f $Team
     S4 = 'rg-{0}-app and rg-{0}-data' -f $Team
 }
+
+Write-Host ''
+Write-Host 'Summary' -ForegroundColor Cyan
+Write-Host ('  Team:          {0}' -f $Team)
+Write-Host ('  Subscription:  {0} ({1})' -f $account.name, $account.id)
+if (-not $CleanupOnly) { Write-Host ('  Region:        {0}' -f $Location) }
+Write-Host ('  Starts at:     {0} {1}' -f $StartAt, $StageTitles[$StartAt])
+Write-Host ('  Answers file:  .deploy\{0}.json' -f $Team)
+
+# 5. Mode, asked last so the runner sees everything first.
+if ($CleanupOnly) {
+    $Mode = 'Interactive'
+}
+elseif ($Mode) {
+    Write-Host ('  Mode:          {0} (from -Mode)' -f $Mode)
+}
+else {
+    $choice = Read-Mode
+    if ($choice -eq 'Cancel') {
+        Write-Host 'Cancelled. Nothing was deployed or saved.'
+        exit 0
+    }
+    $Mode = $choice
+}
+$ModeLabel = if ($Mode -eq 'Autopilot') { 'Autopilot' } else { 'Human in the loop' }
+
+Save-Settings
+
+# --- Main: stages ------------------------------------------------------------------------
 
 # Autopilot stops after S3. Cleanup is always a separate, confirmed run.
 $lastStage = if ($Mode -eq 'Autopilot') { 'S3' } else { 'S4' }

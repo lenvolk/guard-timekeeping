@@ -5,7 +5,8 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   {% if refresh_seconds %}<meta http-equiv="refresh" content="{{ refresh_seconds }}">{% endif %}
   <title>{{ title }} | Timekeeping</title>
-  <link rel="stylesheet" href="{{ url_for('static', path='style.css') }}">
+  {# .path keeps the URL relative. App Service ends TLS, so a full URL would say http:// and be blocked. #}
+  <link rel="stylesheet" href="{{ url_for('static', path='style.css').path }}">
 </head>
 <body>
   <div class="banner" role="note">
