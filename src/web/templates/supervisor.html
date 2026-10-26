@@ -1,0 +1,59 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="card-head">
+  <h1>{{ board.site.name }}</h1>
+  <span class="muted">Refreshes every {{ refresh_seconds }} seconds &middot; times in {{ tz }}</span>
+</div>
+
+<section class="card" data-site-id="{{ board.site.id }}">
+  <h2>Posts</h2>
+  <table>
+    <thead><tr><th>Post</th><th>Status</th><th>Guard</th><th>Since</th></tr></thead>
+    <tbody>
+      {% for p in board.posts %}
+      <tr class="post" data-post-id="{{ p.id }}" data-post-state="{{ 'covered' if p.assignment_id else 'vacant' }}"
+          data-assignment-id="{{ p.assignment_id or '' }}" data-guard-id="{{ p.guard_id or '' }}">
+        <td>{{ p.name }}</td>
+        <td><span class="state state-{{ 'on-post' if p.assignment_id else 'vacant' }}">{{ 'Covered' if p.assignment_id else 'Vacant' }}</span></td>
+        <td>{% if p.guard_id %}<a href="/guard/{{ p.guard_id }}">{{ p.guard_name }}</a>{% endif %}</td>
+        <td>{{ p.assigned_at | local_time(tz) }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+
+<section class="card">
+  <h2>Guards</h2>
+  <table>
+    <thead><tr><th>Guard</th><th>Badge</th><th>Status</th><th>Shift started</th></tr></thead>
+    <tbody>
+      {% for g in board.guards %}
+      <tr class="guard" data-guard-id="{{ g.id }}" data-guard-state="{{ g.state }}"
+          data-assignment-id="{{ g.assignment_id or '' }}" data-post-id="{{ g.post_id or '' }}">
+        <td><a href="/guard/{{ g.id }}">{{ g.name }}</a></td>
+        <td>{{ g.badge }}</td>
+        <td><span class="state state-{{ g.state }}">{{ g.state | replace('-', ' ') }}{% if g.post_name %}: {{ g.post_name }}{% endif %}</span></td>
+        <td>{{ g.shift_started_at | local_time(tz) }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+
+<section class="card">
+  <h2>Recent events</h2>
+  {% if board.events %}
+  <ul class="events">
+    {% for e in board.events %}
+    <li data-event-id="{{ e.id }}" data-event-type="{{ e.event_type }}" data-has-signature="{{ 'true' if e.has_signature else 'false' }}">
+      <time>{{ e.occurred_at | local_time(tz) }}</time> {{ e.detail }}
+      {% if e.has_signature %}<img class="signature-thumb" src="/signature/{{ e.id }}" alt="Signature of {{ e.signed_by_name }}" loading="lazy">{% endif %}
+    </li>
+    {% endfor %}
+  </ul>
+  {% else %}
+  <p class="muted">No events yet.</p>
+  {% endif %}
+</section>
+{% endblock %}

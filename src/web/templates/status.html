@@ -1,0 +1,21 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Status</h1>
+<section class="card">
+  <dl class="status" data-api="{{ api }}" data-database="{{ database }}" data-storage="{{ storage }}"
+      data-sites="{{ counts.sites if counts.sites is defined else '' }}"
+      data-posts="{{ counts.posts if counts.posts is defined else '' }}"
+      data-guards="{{ counts.guards if counts.guards is defined else '' }}"
+      data-signatures="{{ counts.signatures if counts.signatures is defined else '' }}">
+    <dt>Web app</dt><dd><span class="state state-available">ok</span></dd>
+    <dt>API</dt><dd><span class="state state-{{ 'available' if api == 'ok' else 'error' }}">{{ api }}</span> <span class="muted">{{ api_host }}</span></dd>
+    <dt>Database</dt><dd><span class="state state-{{ 'available' if database == 'ok' else 'error' }}">{{ database }}</span></dd>
+    <dt>Signature storage</dt><dd><span class="state state-{{ 'available' if storage == 'ok' else 'error' }}">{{ storage }}</span></dd>
+    {% if counts %}
+    <dt>Seed data</dt><dd>{{ counts.sites }} sites, {{ counts.posts }} posts, {{ counts.guards }} guards</dd>
+    <dt>Signatures</dt><dd>{{ counts.signatures }} stored</dd>
+    {% endif %}
+  </dl>
+  {% for message in messages %}<p class="flash error" role="alert">{{ message }}</p>{% endfor %}
+</section>
+{% endblock %}

@@ -1,0 +1,113 @@
+{% extends "base.html" %}
+{% block content %}
+{% set g = detail.guard %}
+{% set shift = detail.open_shift %}
+{% set assignment = detail.open_assignment %}
+{% macro signature_pad(pad_id, label) %}
+<div class="signature" data-signature-pad>
+  <label for="{{ pad_id }}">{{ label }}</label>
+  <canvas id="{{ pad_id }}" class="signature-canvas" width="400" height="150"
+          aria-label="{{ label }}. Draw with a mouse, pen or finger."></canvas>
+  <input type="hidden" name="signature" value="">
+  <button type="button" class="link" data-signature-clear>Clear signature</button>
+</div>
+{% endmacro %}
+<p><a href="/">&larr; All guards</a> &middot; <a href="/supervisor/{{ detail.site.id }}">Supervisor board</a></p>
+
+{% if notice %}<p class="flash notice" role="status">{{ notice }}</p>{% endif %}
+{% if error %}<p class="flash error" role="alert">{{ error }}</p>{% endif %}
+
+<section class="card guard-card" data-guard-id="{{ g.id }}" data-guard-state="{{ detail.state }}"
+         data-shift-id="{{ shift.id if shift else '' }}" data-assignment-id="{{ assignment.id if assignment else '' }}">
+  <h1>{{ g.name }}</h1>
+  <p class="muted">{{ g.badge }} &middot; {{ detail.site.name }} &middot; times in {{ tz }}</p>
+  <p>
+    <span class="state state-{{ detail.state }}">{{ detail.state | replace('-', ' ') }}</span>
+    {% if shift %}On shift since {{ shift.started_at | local_time(tz) }}.{% endif %}
+    {% if assignment %}On {{ assignment.post_name }} since {{ assignment.started_at | local_time(tz) }}.{% endif %}
+  </p>
+</section>
+
+{% if not shift %}
+<section class="card">
+  <h2>Start shift</h2>
+  <form method="post" action="/guard/{{ g.id }}/start-shift">
+    <label for="witness">Witness (a different guard)</label>
+    <select id="witness" name="witness_guard_id" required>
+      <option value="">Pick a guard</option>
+      {% for other in board.guards if other.id != g.id %}
+      <option value="{{ other.id }}">{{ other.name }}</option>
+      {% endfor %}
+    </select>
+    <label class="check"><input type="checkbox" name="equipment_on" required> Equipment on</label>
+    {{ signature_pad("sign-start", g.name ~ " signs to start the shift") }}
+    <button type="submit" data-requires-signature disabled>Start shift</button>
+  </form>
+</section>
+{% endif %}
+
+{% if shift and not assignment %}
+<section class="card">
+  <h2>Take a post</h2>
+  <form method="post" action="/guard/{{ g.id }}/take-post">
+    <label for="post">Post</label>
+    <select id="post" name="post_id" required>
+      <option value="">Pick a post</option>
+      {% for p in board.posts %}
+      <option value="{{ p.id }}">{{ p.name }}{% if p.guard_name %} (covered by {{ p.guard_name }}){% else %} (vacant){% endif %}</option>
+      {% endfor %}
+    </select>
+    <button type="submit">Take post</button>
+  </form>
+</section>
+{% endif %}
+
+{% if assignment %}
+<section class="card">
+  <h2>Hand over {{ assignment.post_name }}</h2>
+  <p class="hint">The relief guard must be on shift, off post and at this site. The relief guard signs to accept the post.</p>
+  <form method="post" action="/assignment/{{ assignment.id }}/relieve">
+    <input type="hidden" name="guard_id" value="{{ g.id }}">
+    <label for="relief">Relief guard</label>
+    <select id="relief" name="relief_guard_id" required>
+      <option value="">Pick a guard</option>
+      {% for other in board.guards if other.id != g.id %}
+      <option value="{{ other.id }}">{{ other.name }} ({{ other.state | replace('-', ' ') }}{% if other.post_name %}: {{ other.post_name }}{% endif %})</option>
+      {% endfor %}
+    </select>
+    {{ signature_pad("sign-relief", "Relief guard signs to accept the post") }}
+    <button type="submit" data-requires-signature disabled>Hand over post</button>
+  </form>
+</section>
+{% endif %}
+
+{% if shift %}
+<section class="card">
+  <h2>End shift</h2>
+  <form method="post" action="/guard/{{ g.id }}/end-shift">
+    <label class="check"><input type="checkbox" name="equipment_off" required> Equipment off</label>
+    {{ signature_pad("sign-end", g.name ~ " signs to end the shift") }}
+    <button type="submit" class="secondary" data-requires-signature disabled>End shift</button>
+  </form>
+</section>
+{% endif %}
+
+<section class="card">
+  <h2>Recent activity</h2>
+  {% if detail.events %}
+  <ul class="events">
+    {% for e in detail.events %}
+    <li data-event-id="{{ e.id }}" data-event-type="{{ e.event_type }}" data-has-signature="{{ 'true' if e.has_signature else 'false' }}">
+      <time>{{ e.occurred_at | local_time(tz) }}</time> {{ e.detail }}
+      {% if e.has_signature %}<img class="signature-thumb" src="/signature/{{ e.id }}" alt="Signature of {{ e.signed_by_name }}" loading="lazy">{% endif %}
+    </li>
+    {% endfor %}
+  </ul>
+  {% else %}
+  <p class="muted">No activity yet.</p>
+  {% endif %}
+</section>
+{% endblock %}
+{% block scripts %}
+<script src="{{ url_for('static', path='signature-pad.js') }}" defer></script>
+{% endblock %}
