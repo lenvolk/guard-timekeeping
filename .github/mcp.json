@@ -3,19 +3,37 @@
     "azure": {
       "type": "local",
       "command": "npx",
-      "args": ["-y", "@azure/mcp@latest", "server", "start"],
-      "tools": ["*"]
+      "args": [
+        "-y",
+        "@azure/mcp@latest",
+        "server",
+        "start"
+      ],
+      "tools": [
+        "*"
+      ]
     },
     "microsoft-learn": {
       "type": "http",
       "url": "https://learn.microsoft.com/api/mcp",
-      "tools": ["*"]
+      "tools": [
+        "*"
+      ]
     },
     "playwright": {
       "type": "local",
       "command": "npx",
-      "args": ["-y", "@playwright/mcp@latest"],
-      "tools": ["*"]
+      "args": [
+        "-y",
+        "@playwright/mcp@latest"
+      ],
+      "tools": [
+        "*"
+      ]
+    },
+    "excalidraw": {
+      "type": "http",
+      "url": "https://mcp.excalidraw.com"
     }
   }
 }
