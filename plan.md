@@ -18,8 +18,10 @@ Status: agreed on 2026-10-26. Implementation starts in a new session and follows
 - Never read, copy or quote anything from folders outside this repository,
   including any sibling planning folder. The repository is public. Use only
   generic names and fictional people.
-- Follow `.github/skills/unslop/SKILL.md` for all prose. Draw diagrams with the
-  Excalidraw MCP server, never Mermaid.
+- Follow `.github/skills/unslop/SKILL.md` for all prose. Never use Mermaid. Draw
+  diagrams with Excalidraw: preview them with the Excalidraw MCP server, then edit
+  `tools/diagrams/render.mjs` and run it to write `docs/diagrams/*.excalidraw.svg`.
+  Screenshot the result and check that no labels overlap.
 - If a risk in section 9 fails, or a change would alter a decision in section 3,
   stop and ask. Do not quietly widen scope or make the backend public.
 
@@ -81,12 +83,12 @@ Earlier commits stay as they are (agreed option a).
 
 ## 4. Architecture
 
-Gate G6 draws this in Excalidraw and saves it to `docs/diagrams/`. The diagram
-shows three resource-group zones. The browser calls the web app in `rg-app`. The
-web app calls the API app. The API reaches PostgreSQL in `rg-data` through the
-private endpoint in `rg-network`'s endpoint subnet. A separate path shows the
-runner's laptop calling Azure Resource Manager for S1 to S3 and the SCM sites for
-S4. A red note on the API says "internet to API: 403".
+[docs/diagrams/architecture.excalidraw.svg](docs/diagrams/architecture.excalidraw.svg)
+shows this design. It has three resource-group zones. The browser calls the web
+app in `rg-app`. The web app calls the API app. The API reaches PostgreSQL in
+`rg-data` through the private endpoint, which takes its IP from `rg-network`'s
+endpoint subnet. A red dashed line marks a direct internet call to the API, which
+gets 403.
 
 Request path:
 
@@ -271,11 +273,13 @@ infra/s3-app.bicep
 infra/modules/
 src/api/        FastAPI app, schema.sql, seed data, requirements.txt
 src/web/        FastAPI + Jinja2 app, templates, static CSS, requirements.txt
-docs/diagrams/  .excalidraw sources and exported .svg files
+docs/diagrams/  architecture, deployment-stages, production-rbac (.excalidraw.svg)
 docs/production-readiness.md
 docs/glossary.md
+tools/diagrams/ render.mjs regenerates the diagrams (Node.js, Microsoft Edge)
 README.md
 LICENSE
+.gitignore
 ```
 
 ## 9. Implementation gates
@@ -286,13 +290,13 @@ approval.
 
 | Gate | Work | Approval evidence |
 |---|---|---|
-| G0 | Add `LICENSE` and a `.gitignore` entry for `.deploy/`. Update `docs/decisions/0001-dev-workshop-boundaries.md` and `docs/glossary.md` to match this plan. | Search for customer names and customer systems finds nothing. |
+| G0 | `LICENSE`, `.gitignore`, the README and three diagrams already exist (2026-10-26). Update `docs/decisions/0001-dev-workshop-boundaries.md` and `docs/glossary.md` to match this plan. | Search for customer names and customer systems finds nothing. |
 | G1 | `Test-Prerequisites.ps1` and `deploy.ps1` with parameter prompts, defaults, the `.deploy/<team>.json` settings file, the quota check, S0 and the prompt logic. | S0 output on the sponsor's laptop with no parameters passed. Sponsor confirms the subscription and region shown. `n` stops the script. |
 | G2 | S1 Bicep. | S1 checks and portal view. |
 | G3 | S2 Bicep. | S2 checks and measured time. |
 | G4 | S3 Bicep. | S3 checks. |
 | G5 | API and web code, S4, `Test-Workflow.ps1`. | S4 checks and a manual walkthrough together. |
-| G6 | README, Excalidraw diagrams (architecture, request path, stage flow, production RBAC view), `docs/production-readiness.md`. | Sponsor reads the README. |
+| G6 | Update the README, its three diagrams and their Status line to match the built kit, including real outputs, measured times and troubleshooting. Write `docs/production-readiness.md`. | Sponsor reads the README and the diagram screenshots. |
 | G7 | Fresh S0 to S4 run with a new team name, then S5. Update the agenda with measured times. Commit and push. | Timings fit the agenda. All three groups are deleted. |
 
 Risks to prove during the gates. If one fails, stop and decide together.

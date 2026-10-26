@@ -1,0 +1,7 @@
+{
+  "name": "diagrams",
+  "private": true,
+  "type": "module",
+  "scripts": { "render": "node render.mjs" },
+  "devDependencies": { "playwright-core": "^1.0.0" }
+}
