@@ -1,0 +1,12 @@
+{# One guard's status badge. Expects g, a guard row from the API board. #}
+{% if g.state == 'on-break' %}
+<span class="state state-on-break{% if g.overdue_minutes %} state-overdue{% endif %}">On break: {{ g.break_type }}{% if g.overdue_minutes %}, {{ g.overdue_minutes }} min over{% endif %}</span>
+{% elif g.state == 'covering' %}
+<span class="state state-covering">Covering: {{ g.post_name }} for {{ g.covering_for_name }}</span>
+{% elif g.state == 'on-post' %}
+<span class="state state-on-post">On post: {{ g.post_name }}</span>
+{% elif g.state == 'available' %}
+<span class="state state-available">Available</span>
+{% else %}
+<span class="state state-off-shift">Off shift</span>
+{% endif %}

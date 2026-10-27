@@ -2,5 +2,6 @@
 {% block content %}
 <h1>{{ title }}</h1>
 <p class="flash error" role="alert">{{ message }}</p>
-<p><a href="/">Back to sites and guards</a> &middot; <a href="/status">Check status</a></p>
+<p>{% if user %}<a href="{{ '/guard/' ~ user.id if user.kind == 'guard' else '/' }}">Back to my page</a>{% else %}<a href="/signin">Sign in</a>{% endif %}
+  &middot; <a href="/status">Check status</a></p>
 {% endblock %}

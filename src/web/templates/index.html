@@ -1,13 +1,16 @@
 {% extends "base.html" %}
 {% block content %}
-<h1>Pick a site and a guard</h1>
+<h1>Sites and guards</h1>
 {% if notice %}<p class="flash notice" role="status">{{ notice }}</p>{% endif %}
-<p class="hint">There is no sign-in. Pick any guard to act as that person.</p>
+<p class="hint">Open a site's supervisor board to approve corrections, or its daily record to review and export the day.</p>
 {% for board in boards %}
 <section class="card site" data-site-id="{{ board.site.id }}">
   <div class="card-head">
     <h2>{{ board.site.name }}</h2>
-    <a class="button secondary" href="/supervisor/{{ board.site.id }}">Supervisor board</a>
+    <span>
+      <a class="button secondary" href="/supervisor/{{ board.site.id }}">Supervisor board</a>
+      <a class="button secondary" href="/audit/{{ board.site.id }}">Daily record</a>
+    </span>
   </div>
   <p class="muted">Time zone: {{ board.site.time_zone }}</p>
   <ul class="guard-list">
@@ -15,7 +18,7 @@
     <li data-guard-id="{{ g.id }}" data-guard-state="{{ g.state }}">
       <a href="/guard/{{ g.id }}">{{ g.name }}</a>
       <span class="muted">{{ g.badge }}</span>
-      <span class="state state-{{ g.state }}">{{ g.state | replace('-', ' ') }}{% if g.post_name %}: {{ g.post_name }}{% endif %}</span>
+      {% include "_state.html" %}
     </li>
     {% endfor %}
   </ul>

@@ -25,6 +25,14 @@ param runnerPrincipalId string
 ])
 param runnerPrincipalType string = 'User'
 
+@description('Shared key that only the web app sends to the API. A new one on every S2 run.')
+@secure()
+param apiSharedKey string = newGuid()
+
+@description('Signs the web app\'s session cookies. A new one on every S2 run signs everyone out.')
+@secure()
+param sessionSecret string = newGuid()
+
 var suffix = take(uniqueString(subscription().id, team), 5)
 var names = resourceNames(team, suffix)
 var tags = {
@@ -96,6 +104,8 @@ module appTier 'modules/app-tier.bicep' = {
     storageBlobUrl: storage.properties.primaryEndpoints.blob
     signatureContainer: names.signatureContainer
     apiSubnetId: network.outputs.appSubnetId
+    apiSharedKey: apiSharedKey
+    sessionSecret: sessionSecret
   }
 }
 

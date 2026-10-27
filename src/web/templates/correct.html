@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+{% block content %}
+<p><a href="/guard/{{ detail.guard.id }}">&larr; Back to my shift</a></p>
+<section class="card">
+  <h1>Request a correction</h1>
+  {% if error %}<p class="flash error" role="alert">{{ error }}</p>{% endif %}
+  <p><strong>Entry:</strong> {{ event.detail }}</p>
+  <p><strong>Recorded at:</strong> {{ event.occurred_at | local_time(tz) }}</p>
+  <p class="hint">The recorded entry is never changed. A supervisor approves or rejects your correction,
+    and the daily record shows both the original and the corrected time.</p>
+  <form method="post" action="/guard/{{ detail.guard.id }}/correct/{{ event.id }}" data-event-id="{{ event.id }}">
+    <label for="proposed_time">Correct time (same day, {{ tz }})</label>
+    <input id="proposed_time" name="proposed_time" type="time" value="{{ proposed_time }}" required>
+    <label for="reason">Reason</label>
+    <textarea id="reason" name="reason" rows="3" minlength="5" required
+              placeholder="For example: The tablet was busy, I started at 07:55.">{{ reason }}</textarea>
+    <button type="submit">Send to supervisor</button>
+  </form>
+</section>
+{% endblock %}

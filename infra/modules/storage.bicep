@@ -35,6 +35,17 @@ resource storage 'Microsoft.Storage/storageAccounts@2026-06-01' = {
 resource blobService 'Microsoft.Storage/storageAccounts/blobServices@2026-06-01' = {
   parent: storage
   name: 'default'
+  // Deleted or overwritten signatures stay recoverable for 7 days (21 CFR 1271.270(c): back up electronic records).
+  properties: {
+    deleteRetentionPolicy: {
+      enabled: true
+      days: 7
+    }
+    containerDeleteRetentionPolicy: {
+      enabled: true
+      days: 7
+    }
+  }
 }
 
 resource container 'Microsoft.Storage/storageAccounts/blobServices/containers@2026-06-01' = {

@@ -149,7 +149,7 @@ function Write-RunSummary {
         Write-Host ''
         Write-Host ('  Website:          {0}' -f $script:WebUrl)
         Write-Host ('  Status page:      {0}/status' -f $script:WebUrl)
-        Write-Host ('  Supervisor board: {0}/supervisor/1' -f $script:WebUrl)
+        Write-Host '  Sign-in details:  demo.md, for example guard G-1001 or supervisor S-1001'
     }
 }
 
@@ -343,24 +343,42 @@ function Get-ArmResource {
     return (Invoke-AzJson rest --method get --url ('{0}?api-version={1}' -f $ResourceId, $ApiVersion) -o json)
 }
 
+# Reads the object ID (oid claim) from the Azure Resource Manager access token. It
+# works when Microsoft Graph asks for a fresh sign-in but Resource Manager does not.
+function Get-TokenObjectId {
+    $token = Invoke-Az account get-access-token --query accessToken -o tsv
+    $payload = $token.Trim().Split('.')[1].Replace('-', '+').Replace('_', '/')
+    switch ($payload.Length % 4) { 2 { $payload += '==' } 3 { $payload += '=' } }
+    $claims = [System.Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($payload)) | ConvertFrom-Json
+    return $claims.oid
+}
+
 # Object ID and principal type of the signed-in account, as role assignments need them.
 function Get-RunnerPrincipal {
     $current = Invoke-AzJson account show -o json
+    $type = if ($current.user.type -eq 'servicePrincipal') { 'ServicePrincipal' } else { 'User' }
     try {
-        if ($current.user.type -eq 'servicePrincipal') {
+        if ($type -eq 'ServicePrincipal') {
             $id = Invoke-Az ad sp show --id $current.user.name --query id -o tsv
-            return [pscustomobject]@{ Id = $id.Trim(); Type = 'ServicePrincipal' }
         }
-        $id = Invoke-Az ad signed-in-user show --query id -o tsv
-        return [pscustomobject]@{ Id = $id.Trim(); Type = 'User' }
+        else {
+            $id = Invoke-Az ad signed-in-user show --query id -o tsv
+        }
+        return [pscustomobject]@{ Id = $id.Trim(); Type = $type }
     }
     catch {
-        $hint = ''
-        if ($_.Exception.Message -match 'InteractionRequired|TokenCreatedWithOutdatedPolicies|AADSTS') {
-            $hint = ' Your Azure CLI sign-in needs refreshing. Run "az login", then resume.'
-        }
-        throw ('Could not read your Microsoft Entra object ID, which S2 needs for the storage role assignment. {0}{1}' -f $_.Exception.Message, $hint)
+        $graphError = $_.Exception.Message
     }
+    try {
+        $oid = Get-TokenObjectId
+        if ($oid) { return [pscustomobject]@{ Id = $oid; Type = $type } }
+    }
+    catch { }
+    $hint = ''
+    if ($graphError -match 'InteractionRequired|TokenCreatedWithOutdatedPolicies|AADSTS') {
+        $hint = ' Your Azure CLI sign-in needs refreshing. Run "az login", then resume.'
+    }
+    throw ('Could not read your Microsoft Entra object ID, which S2 needs for the storage role assignment. {0}{1}' -f $graphError, $hint)
 }
 
 # --- HTTP helpers (System.Net.Http works the same in 5.1 and 7) ----------------------
@@ -584,6 +602,42 @@ function Invoke-S2 {
     Complete-StageChecks 'S2'
 }
 
+function Get-LatestKuduDeployment {
+    param([string]$ScmHost)
+    try {
+        $token = Invoke-Az account get-access-token --query accessToken -o tsv
+        return Invoke-RestMethod -Uri ('https://{0}/api/deployments/latest' -f $ScmHost) -Headers @{ Authorization = 'Bearer ' + $token.Trim() } -TimeoutSec 60
+    }
+    catch {
+        return $null
+    }
+}
+
+# Uploads a zip without waiting on one long HTTP call, which can end in a 504 while
+# App Service still installs requirements.txt. Then follows the build on the app's
+# Kudu site until it finishes.
+function Invoke-CodeDeployment {
+    param([string]$ResourceGroup, [string]$AppName, [string]$ZipPath)
+    $scmHost = @(Invoke-AzJson webapp show --resource-group $ResourceGroup --name $AppName --query enabledHostNames -o json) |
+        Where-Object { $_ -like '*.scm.*' } | Select-Object -First 1
+    $before = Get-LatestKuduDeployment $scmHost
+    $beforeId = if ($before) { $before.id } else { '' }
+    Invoke-AzLive webapp deploy --resource-group $ResourceGroup --name $AppName --src-path $ZipPath --type zip --async true --track-status false --only-show-errors --output none
+    $deadline = (Get-Date).AddMinutes(15)
+    while ((Get-Date) -lt $deadline) {
+        Start-Sleep -Seconds 15
+        $latest = Get-LatestKuduDeployment $scmHost
+        if (-not $latest -or $latest.id -eq $beforeId -or -not $latest.complete) { continue }
+        # Kudu status 4 is Success. 3 is Failed.
+        if ($latest.status -eq 4) {
+            Write-Info ('{0}: build and deployment finished.' -f $AppName)
+            return
+        }
+        throw ('The build for {0} failed (Kudu status {1}). Its log: https://{2}/api/deployments/latest' -f $AppName, $latest.status, $scmHost)
+    }
+    throw ('The build for {0} did not finish within 15 minutes. Check https://{1}/api/deployments/latest' -f $AppName, $scmHost)
+}
+
 function Invoke-S3 {
     Start-PostgresIfStopped
     $o = Get-DeploymentOutputs ('tk-{0}-s2' -f $Team)
@@ -600,9 +654,9 @@ function Invoke-S3 {
     # and App Service can block cold starts. The CLI's runtime tracking then reports that stale
     # failure or hangs. The /healthz and /status polling below checks startup instead.
     Write-Info ('Deploying the API to {0}. App Service installs requirements.txt, which takes a few minutes.' -f $o.apiAppName)
-    Invoke-AzLive webapp deploy --resource-group $o.appResourceGroup --name $o.apiAppName --src-path $apiZip --type zip --track-status false --only-show-errors --output none
+    Invoke-CodeDeployment -ResourceGroup $o.appResourceGroup -AppName $o.apiAppName -ZipPath $apiZip
     Write-Info ('Deploying the web app to {0}.' -f $o.webAppName)
-    Invoke-AzLive webapp deploy --resource-group $o.appResourceGroup --name $o.webAppName --src-path $webZip --type zip --track-status false --only-show-errors --output none
+    Invoke-CodeDeployment -ResourceGroup $o.appResourceGroup -AppName $o.webAppName -ZipPath $webZip
 
     Write-Info 'Waiting for both apps to start and the API to create and seed the tables.'
     $deadline = (Get-Date).AddMinutes(10)

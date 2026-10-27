@@ -9,29 +9,42 @@ SITES = [
         "name": "Riverside Office Park",
         "time_zone": "America/New_York",
         "posts": ["Main Gate", "Lobby Desk"],
+        # Badge, first name, last name, date of birth (synthetic, MM/DD/YYYY).
         "guards": [
-            ("Jordan", "Avila", "G-1001"),
-            ("Priya", "Hollis", "G-1002"),
-            ("Marcus", "Ferrin", "G-1003"),
-            ("Elena", "Brandt", "G-1004"),
-            ("Tomas", "Reyna", "G-1005"),
-            ("Grace", "Okafor", "G-1006"),
+            ("Jordan", "Avila", "G-1001", "03/14/1988"),
+            ("Priya", "Hollis", "G-1002", "07/22/1991"),
+            ("Marcus", "Ferrin", "G-1003", "11/05/1985"),
+            ("Elena", "Brandt", "G-1004", "01/30/1993"),
+            ("Tomas", "Reyna", "G-1005", "09/09/1979"),
+            ("Grace", "Okafor", "G-1006", "05/17/1996"),
         ],
+        "supervisor": ("Riley", "Chen", "S-1001", "04/04/1980"),
     },
     {
         "name": "Lakeshore Distribution Center",
         "time_zone": "America/Chicago",
         "posts": ["North Dock Gate", "Control Room"],
         "guards": [
-            ("Dana", "Whitlock", "G-2001"),
-            ("Samuel", "Ortiz-Lane", "G-2002"),
-            ("Keisha", "Morrow", "G-2003"),
-            ("Victor", "Lindqvist", "G-2004"),
-            ("Hannah", "Prescott", "G-2005"),
-            ("Omar", "Castellano", "G-2006"),
+            ("Dana", "Whitlock", "G-2001", "12/02/1987"),
+            ("Samuel", "Ortiz-Lane", "G-2002", "04/26/1990"),
+            ("Keisha", "Morrow", "G-2003", "08/11/1984"),
+            ("Victor", "Lindqvist", "G-2004", "02/19/1992"),
+            ("Hannah", "Prescott", "G-2005", "10/03/1995"),
+            ("Omar", "Castellano", "G-2006", "06/28/1982"),
         ],
+        "supervisor": ("Morgan", "Patel", "S-2001", "10/10/1983"),
     },
 ]
+
+# Sees every site.
+REGIONAL_SUPERVISOR = ("Avery", "Brooks", "S-9001", "01/15/1976")
+
+
+def _dob_hash(us_date: str) -> str:
+    # Imported here because auth imports db, which imports this module.
+    from auth import hash_dob, normalize_dob
+
+    return hash_dob(normalize_dob(us_date))
 
 # Starting state for each site, by position in the guard list:
 # guard 1 is on shift and on the first post (a busy relief candidate),
@@ -60,15 +73,21 @@ def load(conn: psycopg.Connection) -> None:
 
         guard_ids = []
         names = []
-        for first, last, badge in site["guards"]:
+        for first, last, badge, dob in site["guards"]:
             guard_ids.append(
                 conn.execute(
-                    "INSERT INTO guards (site_id, first_name, last_name, badge)"
-                    " VALUES (%s, %s, %s, %s) RETURNING id",
-                    (site_id, first, last, badge),
+                    "INSERT INTO guards (site_id, first_name, last_name, badge, dob_hash)"
+                    " VALUES (%s, %s, %s, %s, %s) RETURNING id",
+                    (site_id, first, last, badge, _dob_hash(dob)),
                 ).fetchone()["id"]
             )
             names.append(f"{first} {last}")
+
+        first, last, badge, dob = site["supervisor"]
+        conn.execute(
+            "INSERT INTO supervisors (site_id, first_name, last_name, badge, dob_hash) VALUES (%s, %s, %s, %s, %s)",
+            (site_id, first, last, badge, _dob_hash(dob)),
+        )
 
         witness_id = guard_ids[WITNESS]
         witness_name = names[WITNESS]
@@ -105,3 +124,33 @@ def load(conn: psycopg.Connection) -> None:
                 f"{names[ON_POST]} took {site['posts'][0]}.",
             ),
         )
+
+    first, last, badge, dob = REGIONAL_SUPERVISOR
+    conn.execute(
+        "INSERT INTO supervisors (site_id, first_name, last_name, badge, dob_hash) VALUES (NULL, %s, %s, %s, %s)",
+        (first, last, badge, _dob_hash(dob)),
+    )
+
+
+def ensure_credentials(conn: psycopg.Connection) -> None:
+    """Adds sign-in data to a database seeded before sign-in existed. The caller holds
+    the setup lock and commits."""
+    for site in SITES:
+        for first, last, badge, dob in site["guards"]:
+            conn.execute(
+                "UPDATE guards SET dob_hash = %s WHERE badge = %s AND dob_hash IS NULL", (_dob_hash(dob), badge)
+            )
+        site_row = conn.execute("SELECT id FROM sites WHERE name = %s", (site["name"],)).fetchone()
+        if site_row:
+            first, last, badge, dob = site["supervisor"]
+            conn.execute(
+                "INSERT INTO supervisors (site_id, first_name, last_name, badge, dob_hash)"
+                " VALUES (%s, %s, %s, %s, %s) ON CONFLICT (badge) DO NOTHING",
+                (site_row["id"], first, last, badge, _dob_hash(dob)),
+            )
+    first, last, badge, dob = REGIONAL_SUPERVISOR
+    conn.execute(
+        "INSERT INTO supervisors (site_id, first_name, last_name, badge, dob_hash)"
+        " VALUES (NULL, %s, %s, %s, %s) ON CONFLICT (badge) DO NOTHING",
+        (first, last, badge, _dob_hash(dob)),
+    )

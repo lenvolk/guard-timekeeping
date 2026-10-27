@@ -6,9 +6,10 @@
   {% if warning %}<p class="flash error" role="alert">{{ warning }}</p>{% endif %}
   <p>This puts the app back to where a new deployment starts, so you can run the walkthrough again:</p>
   <ul>
-    <li>Every shift, post assignment and event is deleted, at both sites.</li>
-    <li>Every signature PNG is deleted from Blob Storage.</li>
-    <li>The synthetic sites, posts and guards are loaded again. Lobby Desk and Control Room are vacant.</li>
+    <li>Every shift, post assignment, break, correction and event is deleted, at both sites.</li>
+    <li>Every signature PNG is deleted from Blob Storage. Soft delete keeps a copy for 7 days.</li>
+    <li>The synthetic sites, posts, guards and supervisors are loaded again. Lobby Desk and Control Room are vacant.</li>
+    <li>Everyone is signed out, including you.</li>
   </ul>
   <p class="muted">Anyone using this deployment loses their test data. It cannot be undone.</p>
   <form method="post" action="/reset">

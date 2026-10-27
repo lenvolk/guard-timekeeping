@@ -1,8 +1,10 @@
 # guard-timekeeping
 
 A four-hour Azure workshop. Each team uses Bicep to deploy a three-tier
-timekeeping app for a security-guard workforce. Guards sign on screen, and the app
-stores the signatures in Blob Storage. The app uses synthetic data only.
+timekeeping app for a security-guard workforce. Guards sign in on a shared tablet,
+start and end shifts, take posts and breaks, and sign on screen for every change of
+responsibility. Supervisors approve corrections and review a daily record. The
+app stores the signatures in Blob Storage and uses synthetic data only.
 
 > Status: the [plan](plan.md) is agreed. The scripts, Bicep templates and app are
 > being built and tested gate by gate. Commands below work once gate G4 is done.
@@ -13,8 +15,8 @@ stores the signatures in Blob Storage. The app uses synthetic data only.
 
 | Tier | Resource group | Azure service | How access works |
 |---|---|---|---|
-| Web | `rg-<team>-app` | App Service, Linux B1 | Public, anonymous demo personas |
-| API | `rg-<team>-app` | App Service, same plan | Public |
+| Web | `rg-<team>-app` | App Service, Linux B1 | Public. People sign in with employee ID and date of birth |
+| API | `rg-<team>-app` | App Service, same plan | Public address, but answers only the web app (shared key) |
 | Database | `rg-<team>-data` | PostgreSQL Flexible Server, B1ms | Azure services only, Entra sign-in only |
 | Signatures | `rg-<team>-data` | Storage account, `signatures` container | Entra identities only, keys turned off |
 | Network | `rg-<team>-app` | VNet, blob private endpoint, private DNS zone | The API joins the VNet and reaches storage privately |
@@ -38,8 +40,24 @@ the signature PNGs in the Azure portal. Keys are turned off, so the portal uses
 your Entra sign-in and needs that role.
 
 > If a policy has turned off public network access, the portal cannot list the
-> `signatures` container from your laptop. Use the supervisor page to see the
+> `signatures` container from your laptop. Use the daily record to see the
 > signatures instead.
+
+## What the app does
+
+One continuous transaction chain, built for a shared tablet at each site:
+
+| Step | In the app |
+|---|---|
+| **Identify** | Sign-in with employee ID and date of birth. Guards see only their own page, supervisors only their site (a regional supervisor sees both). Five wrong tries lock the ID for five minutes |
+| **Transact** | Start and end a shift, take a post, take a lunch (60 min) or restroom (15 min) break with an available guard covering, hand over a post. Steps out of order are refused with a message |
+| **Sign** | A finger or stylus signature on every change of responsibility. Each one stores the signer, the time, its meaning and a SHA-256 fingerprint. The relief or cover guard confirms with their own date of birth before signing |
+| **Supervise** | Guards request time corrections with a reason. A supervisor approves or rejects them. Overdue breaks, long shifts and locked IDs are flagged under **Needs attention** |
+| **Audit** | A daily record per site with original and corrected times, signature checks, print and CSV export. Nothing recorded is ever changed |
+
+The design uses 21 CFR Part 11, the FDA rule for electronic records and signatures,
+as a benchmark. [pilot.md](pilot.md) maps each control and lists the gaps.
+[demo.md](demo.md) has the sign-in details and a click-by-click walkthrough.
 
 ## How deployment runs
 
@@ -148,21 +166,20 @@ Microsoft docs:
 
 ## Try the app
 
-Open the web URL that S3 prints. Pick a site and a guard.
+Open the web URL that S3 prints and sign in as guard `G-1001`, date of birth
+`03/14/1988`. All sign-in details are in [demo.md](demo.md).
 
 1. Start a shift, pick a witness and sign.
 2. Take a vacant post.
-3. Hand the post to a relief guard, who signs to accept.
-4. End the shift and sign.
-
-The supervisor page shows covered posts, the event history and signature
-thumbnails. If your subscription allows public access to storage, you can also
-open the storage account in the Azure portal, then the `signatures` container, to
-see the same PNG files.
+3. Take a lunch break. An available guard confirms with their date of birth and
+   signs to cover the post. Return from the break and sign.
+4. Hand the post to a relief guard, who confirms and signs to accept.
+5. End the shift and sign, then request a correction of the end time.
+6. Sign in as supervisor `S-1001`, approve the correction, and open the daily record.
 
 [demo.md](demo.md) walks through these steps one click at a time and explains what
-each one proves. To run them again, click **Reset** in the top bar. It deletes all
-activity and signatures and loads the synthetic data again.
+each one proves. To run them again, sign in as a supervisor and click **Reset**. It
+deletes all activity and signatures and loads the synthetic data again.
 
 ## Clean up
 
@@ -181,22 +198,26 @@ This workshop takes shortcuts. Production needs at least:
 
 - a VNet with private endpoints for the database and API (storage already has one)
 - scoped roles per resource group instead of one subscription Owner
-- Entra sign-in instead of picking a persona
-- no Reset page: anyone on the site can wipe all data with it
-- no Start database button, and a custom role that can only start the server
-  instead of Contributor on it
-- legally approved e-signatures with retention and immutable storage
+- Microsoft Entra ID or a PIN instead of employee ID and date of birth, which is
+  weak as a password even though only a salted hash is stored
+- an Entra token or private networking between the web app and the API instead of
+  a shared key
+- no Reset page, and no Start database button with Contributor on the server
+- legally approved e-signatures with 10-year retention and immutable storage
 - least-privilege database roles and versioned migrations
 - CI/CD with protected environments instead of laptop prompts
 - a WAF, zone redundancy, tested backups and alerts
 - approved labor, break and pay rules
 
-Section 11 of the [plan](plan.md#11-production-follow-up) has the full list.
+[pilot.md](pilot.md) lists the security, recovery and compliance gaps against
+21 CFR Part 11. Section 11 of the [plan](plan.md#11-production-follow-up) has the
+full list.
 
 ## Diagrams
 
 The diagrams are `.excalidraw.svg` files: architecture, deployment stages,
-production roles, and the [demo.md](demo.md) test flow. GitHub shows them as images, and the
+production roles, the [demo.md](demo.md) test flow and the [pilot.md](pilot.md)
+compliance map. GitHub shows them as images, and the
 [Excalidraw VS Code extension](https://marketplace.visualstudio.com/items?itemName=pomdtr.excalidraw-editor)
 opens them for editing. To regenerate them from code, run `npm install` and
 `node render.mjs` in [tools/diagrams](tools/diagrams). This needs Node.js and

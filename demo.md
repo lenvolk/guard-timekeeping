@@ -1,7 +1,7 @@
 # Demo: test the timekeeping app
 
-Use this after `deploy.ps1` has finished. It shows three ways to check that the app
-works, from fully automatic to clicking through it yourself. Allow about 15 minutes.
+Use this after `deploy.ps1` has finished. It walks through the whole transaction
+chain: **identify, transact, sign, supervise, audit**. Allow about 20 minutes.
 
 `deploy.ps1` works in numbered stages, and the console prints a header for each
 one, for example `=== S3 Code ===`. This guide refers to them by number:
@@ -16,16 +16,17 @@ one, for example `=== S3 Code ===`. This guide refers to them by number:
 
 `-StartAt` reruns from one stage, for example `.\deploy.ps1 -Team team01 -StartAt S2`.
 
-![Three ways to test: automatic checks, the status page, and a five-step walkthrough in the browser. Each signed step saves an event row in PostgreSQL and a PNG in Blob Storage, and the supervisor board shows both](docs/diagrams/test-flow.excalidraw.svg)
+![How to test: automatic checks, the status page, a guard walkthrough with a lunch break, then a supervisor approval and the daily record](docs/diagrams/test-flow.excalidraw.svg)
 
 ## What you are testing
 
-| Piece | Azure service | It works when |
+| Step | What the app does | You see it work when |
 |---|---|---|
-| Web app | App Service in `rg-<team>-app` | The site opens over HTTPS and the signature box draws |
-| API | App Service in `rg-<team>-app` | Actions save, and actions the rules forbid are refused |
-| Database | PostgreSQL in `rg-<team>-data` | Guards, posts and events appear and stay after a refresh |
-| Signatures | Storage account in `rg-<team>-data`, reached through a private endpoint | Signature thumbnails show on the supervisor board |
+| Identify | Sign-in with employee ID and date of birth. Guards and supervisors see different pages | A wrong date of birth is refused, and a guard cannot open the supervisor pages |
+| Transact | Start and end a shift, take a post, take a lunch or restroom break, hand over a post | Each step changes the guard's badge, and steps out of order are refused |
+| Sign | A finger or stylus signature on every step that changes responsibility | Each signature shows who signed, when and what it means |
+| Supervise | Corrections need a reason and a supervisor's approval. Overdue breaks and long shifts are flagged | The correction waits under **Needs attention** until approved |
+| Audit | A daily record per site, with original and corrected times, printable and as CSV | The record shows both times and every signature as **Verified** |
 
 `<team>` is the team name you gave `deploy.ps1`, for example `team01`.
 
@@ -38,130 +39,134 @@ S3 prints it at the end of the deployment, for example
 az webapp list --resource-group rg-team01-app --query "[].defaultHostName" -o tsv
 ```
 
-The name with `-web-` is the site you open. The `-api-` app has no pages.
+The name with `-web-` is the site you open. The `-api-` app only answers the web app.
+
+## Sign-in details
+
+All names and dates are synthetic. Type the date as **MM/DD/YYYY**. The ID is not
+case-sensitive and the dash is optional, so `g1001` works too.
+
+**Riverside Office Park** (site 1, used in the walkthrough)
+
+| Employee ID | Name | Date of birth | Starts as |
+|---|---|---|---|
+| G-1001 | Jordan Avila | 03/14/1988 | Off shift |
+| G-1002 | Priya Hollis | 07/22/1991 | On post: Main Gate |
+| G-1003 | Marcus Ferrin | 11/05/1985 | Available |
+| G-1004 | Elena Brandt | 01/30/1993 | Off shift |
+| G-1005 | Tomas Reyna | 09/09/1979 | Off shift |
+| G-1006 | Grace Okafor | 05/17/1996 | Off shift |
+
+**Lakeshore Distribution Center** (site 2, used by the automatic test)
+
+| Employee ID | Name | Date of birth | Starts as |
+|---|---|---|---|
+| G-2001 | Dana Whitlock | 12/02/1987 | Off shift |
+| G-2002 | Samuel Ortiz-Lane | 04/26/1990 | On post: North Dock Gate |
+| G-2003 | Keisha Morrow | 08/11/1984 | Available |
+| G-2004 | Victor Lindqvist | 02/19/1992 | Off shift |
+| G-2005 | Hannah Prescott | 10/03/1995 | Off shift |
+| G-2006 | Omar Castellano | 06/28/1982 | Off shift |
+
+**Supervisors**
+
+| Employee ID | Name | Date of birth | Sees |
+|---|---|---|---|
+| S-1001 | Riley Chen | 04/04/1980 | Riverside Office Park |
+| S-2001 | Morgan Patel | 10/10/1983 | Lakeshore Distribution Center |
+| S-9001 | Avery Brooks | 01/15/1976 | Both sites (regional) |
+
+Five wrong tries lock an ID for five minutes, and the supervisor sees it under
+**Needs attention**. A guard is signed out after 2 minutes without activity, so a
+shared tablet never stays signed in. A supervisor is signed out after 15 minutes.
 
 ## A. Automatic checks
 
-S3 already ran these. Every line should say `[PASS]`:
-
-- `Web /healthz`: the web app is running.
-- `Web /status`: the API, database and signature storage answer.
-- `Seed data`: 2 sites, 4 posts and 12 guards were loaded.
-- `Test-Workflow.ps1`: a full guard workflow with signatures, run over HTTP.
-
-To run the workflow test again at any time:
+S3 already ran these. Every line should say `[PASS]`. `Test-Workflow.ps1` signs in
+as each person and runs the whole chain on Lakeshore, so Riverside stays as it
+was for your walkthrough:
 
 ```powershell
 .\scripts\Test-Workflow.ps1 -WebUrl https://app-team01-web-abcde.azurewebsites.net
 ```
 
-It uses the last site, Lakeshore Distribution Center, so Riverside Office Park
-stays ready for the walkthrough in part C.
-
 ## B. Status page
 
-Open `https://<your web address>/status`. Every row should say **ok**:
+Open `https://<your web address>/status`. It needs no sign-in. Every row should
+say **ok**: web app, API, database (signed in with the API's managed identity) and
+signature storage (reached through the private endpoint).
 
-| Row | What it proves |
-|---|---|
-| Web app | The site you opened is running |
-| API | The web app can call the API |
-| Database | The API signed in to PostgreSQL with its managed identity, no password |
-| Signature storage | The API reached Blob Storage through the private endpoint |
-| Seed data | 2 sites, 4 posts, 12 guards |
+## C. Guard walkthrough on a tablet
 
-## C. Walk through it in a browser
+Use **Riverside Office Park**. A tablet, or a browser window about 1000 pixels
+wide, shows the layout the guards would use. Each signature box needs a drawing
+with a finger, pen or mouse. The submit button stays grey until you sign.
 
-There is no sign-in. You act as a guard by clicking their name on the home page.
-Each guard has a badge that shows where they are:
+1. **Sign in.** Employee ID `G-1001`, date of birth `03/14/1988`.
+   You see: Jordan Avila's page, **Off shift**.
+2. **Start a shift.** Pick any other guard as the witness, tick **Equipment on**,
+   sign, then click **Start shift**.
+   You see: *Shift started.* The badge changes to **Available**.
+3. **Take a post.** Choose **Lobby Desk**, then click **Take post**.
+   You see: **On post**.
+4. **Take a lunch break.** Under *Take a break*, pick **Lunch, 60 minutes** and
+   cover guard **Marcus Ferrin**. Marcus types his date of birth, `11/05/1985`, and
+   signs to accept the post. Click **Start break**.
+   You see: **On lunch break**, due back in 60 minutes, Marcus covering Lobby Desk.
+   Marcus can't hand the post away or end his shift until Jordan returns.
+5. **Return from the break.** Jordan signs, then clicks **Return from break**.
+   You see: *Welcome back.* Jordan is **On post** again and Marcus is **Available**.
+6. **Hand over the post.** Under *Hand over Lobby Desk*, pick **Marcus Ferrin**.
+   Marcus types `11/05/1985` and signs. Click **Hand over post**.
+   You see: *Post handed over to the relief guard.*
+7. **End the shift.** Tick **Equipment off**, sign, then click **End shift**.
+   You see: *Shift ended.* Jordan is **Off shift**.
+8. **Request a correction.** Under *Recent activity*, find *ended a shift* and
+   click **Request a correction**. Enter a time a few minutes earlier and a reason,
+   for example *I left at 17:00, the tablet was busy*. Click **Send to supervisor**.
+   You see: the entry marked *correction waiting for approval*.
+9. **Sign out** (top right).
 
-| Badge | Meaning | What the guard can do next |
-|---|---|---|
-| **Off Shift** | Not working | Start a shift |
-| **Available** | On shift, no post | Take a vacant post, or accept a post as the relief guard |
-| **On Post: …** | On shift and covering a post | Hand the post to an **Available** guard, then end the shift |
+A restroom break works the same way, with 15 minutes instead of 60.
 
-Each signature box needs a drawing. Use the mouse, a pen or a finger. The submit
-button stays grey until you sign.
+## D. Supervisor review and audit
 
-### First walkthrough on a new deployment
-
-Use **Riverside Office Park**. After a new deployment, or after **Reset**, the home
-page shows:
-
-| Guard | Badge |
-|---|---|
-| Jordan Avila | Off Shift. You start his shift in step 1 |
-| Priya Hollis | On Post: Main Gate |
-| Marcus Ferrin | Available. He is the relief guard in step 3 |
-| Elena Brandt, Tomas Reyna, Grace Okafor | Off Shift |
-
-Lobby Desk is the vacant post.
-
-1. **Start a shift.** Click **Jordan Avila**. Under *Start shift*, pick any other
-   guard as the witness, tick **Equipment on**, sign, then click **Start shift**.
-   You see: *Shift started.* Jordan's badge changes from Off Shift to
-   **Available**.
-2. **Take a post.** Under *Take a post*, choose **Lobby Desk**, then click
-   **Take post**.
-   You see: Jordan is **On Post: Lobby Desk**.
-3. **Hand over the post.** Under *Hand over Lobby Desk*, pick **Marcus Ferrin** as
-   the relief guard. The signature box is now Marcus's: he signs to accept the
-   post. Click **Hand over post**.
-   You see: *Post handed over to the relief guard.* Marcus is now
-   **On Post: Lobby Desk** and Jordan is **Available** again.
-4. **End the shift.** Still on Jordan's page, tick **Equipment off**, sign as
-   Jordan, then click **End shift**.
-   You see: *Shift ended.* Jordan is **Off Shift**.
-5. **Check the supervisor board.** Click **Supervisor board** at the top of the
-   page. The board refreshes every 10 seconds.
-   You see: Lobby Desk is covered by Marcus Ferrin, Jordan Avila is off shift, and
-   the recent events have signature thumbnails.
-
-### Start over with Reset
-
-A hand-over keeps a post covered, so after the first walkthrough there is no
-vacant post. To run the walkthrough again:
-
-1. Click **Reset** in the top bar, next to *Sites and guards* and *Status*.
-2. Read the page, then click **Reset demo data**.
-   You see: the home page with *Demo data reset.* Every badge is back to the table
-   above, and `/status` shows 0 signatures.
-
-Reset deletes every shift, assignment and event at both sites, and every signature
-PNG in Blob Storage. Then it loads the synthetic guards again. It affects everyone
-who uses this deployment and cannot be undone.
-
-### Without Reset
-
-If others are still testing and you do not want to reset, skip *Take a post* and
-use any site:
-
-1. Find a guard with an **On Post** badge. This is the guard who leaves.
-2. Pick an **Off Shift** guard at the same site and start their shift (step 1
-   above). Their badge becomes **Available**.
-3. Open the guard who leaves. Hand the post to the guard you just started. They
-   sign to accept (step 3 above).
-4. Still on that page, end the shift of the guard who leaves (step 4 above).
-5. Check the supervisor board.
-
-For example, if Elena Brandt is **On Post: Lobby Desk** and Marcus Ferrin is
-**Off Shift**: start Marcus's shift, hand Lobby Desk from Elena to Marcus, then
-end Elena's shift.
-
-The thumbnails are the proof that storage works. The browser loads each one from
-the web app, which asks the API, which reads the PNG from Blob Storage through the
-private endpoint.
+1. **Sign in** as `S-1001`, date of birth `04/04/1980`.
+   You see: the Riverside supervisor board, which refreshes every 10 seconds.
+2. **Needs attention.** Jordan's correction is listed with the original time, the
+   new time and the reason. Type a note if you like and click **Approve**.
+   Rejecting needs a note.
+3. **Posts and guards.** Lobby Desk is covered by Marcus, and Jordan is off shift.
+   A guard on a break shows as **On break**, and the guard covering shows as
+   **Covering**. An overdue break turns red here.
+4. **Daily record.** Click **Daily record** in the top bar.
+   You see: every entry of the day. The corrected entry shows the new time, with
+   the recorded time crossed out next to it, the reason and who approved it.
+   Every signature shows the signer, time and meaning, for example
+   *Responsibility: accepts Lobby Desk*, and **Verified**. That means the image still
+   matches the fingerprint (SHA-256) saved when it was signed.
+5. **Export CSV** downloads the same record. **Print** gives a clean paper copy.
 
 ### Try the rules (optional)
 
-The API refuses actions that break the rules, shows a message and saves nothing:
+Each of these is refused with a message and saves nothing:
 
-- Open a guard who is on a post and try **End shift**:
-  *"… is still on … Hand the post to a relief guard before ending the shift."*
-- As a guard who is on shift, pick a post someone else covers and click
-  **Take post**: *"… is already covered by …"*
-- Hand a post to a guard who is **Off Shift**: *"… is not on shift."*
+- Sign in with a wrong date of birth. After five tries the ID locks for five minutes.
+- As a guard, open `/supervisor/1` in the address bar: *This page is for supervisors.*
+- Start a break and type the cover guard's date of birth wrong.
+- On a post, try **End shift**: *Hand the post to a relief guard before ending the shift.*
+- As a supervisor, click **Reject** without a note.
+
+## Start over with Reset
+
+Signed in as a supervisor, click **Reset** in the top bar, then **Reset demo data**.
+Everything recorded at both sites is deleted and the synthetic data is loaded
+again, so every badge is back to the tables above. Everyone is signed out.
+Deleted signature files stay recoverable for 7 days (soft delete).
+
+Without Reset, posts stay covered after the first walkthrough. You can still
+practice a break or a hand-over with any guard who is **On post** and a guard who
+is **Available**.
 
 ## See the data in the Azure portal (optional)
 
@@ -172,10 +177,9 @@ The API refuses actions that break the rules, shows a message and saves nothing:
 3. Open **Data storage**, then **Containers**, then `signatures`. Files are stored
    as `<site>/<year>/<month>/<day>/<event>.png`.
 
-If the portal says you are not authorized, or that access from your network is
-blocked, a subscription policy has turned off public network access on the
-storage account. That is expected: only the API can reach storage, through the
-private endpoint. Use the supervisor board to see the signatures instead.
+If the portal says access from your network is blocked, a subscription policy has
+turned off public network access on the storage account. That is expected: only
+the API can reach storage, through the private endpoint. Use the daily record.
 
 To watch requests as you click, open `rg-<team>-app`, then `appi-<team>`, then
 **Live metrics**.
@@ -185,22 +189,19 @@ To watch requests as you click, open `rg-<team>-app`, then `appi-<team>`, then
 | What you see | Likely cause | What to do |
 |---|---|---|
 | The site does not load, or returns 503, right after S3 | The apps are still starting | Wait 2 to 3 minutes and refresh |
-| `/status` says storage **error** | The storage role is still being applied, or the private endpoint is missing | Wait 5 minutes. If it stays, run `.\deploy.ps1 -Team <team> -StartAt S2` |
-| Every page says *The database is not available*, on a deployment that worked before | The PostgreSQL server is **Stopped**. Some subscriptions run automation that stops idle servers overnight | Open **Status**. It says *The database server is stopped*. Select **Start database** and wait about 2 minutes. The page refreshes by itself and turns green |
+| Every page says *The database is not available*, on a deployment that worked before | The PostgreSQL server is **Stopped**. Some subscriptions stop idle servers overnight | Open **Status**. It says *The database server is stopped*. Select **Start database**, which needs no sign-in, and wait about 2 minutes |
+| *The employee ID or date of birth is wrong* | A typo, or the date is not MM/DD/YYYY | Check the tables above |
+| *Too many wrong tries* | Five wrong tries locked the ID | Wait five minutes |
+| You are back on the sign-in page | 2 minutes without activity signed you out | Sign in again |
+| `/status` says storage **error** | The storage role is still being applied | Wait 5 minutes. If it stays, run `.\deploy.ps1 -Team <team> -StartAt S2` |
 | `/status` says database **error** right after a deployment | The API identity is not the PostgreSQL admin yet | Run `.\deploy.ps1 -Team <team> -StartAt S2` |
-| The page has no styling, or the signature box does not draw | The browser blocked the stylesheet or script | Run `.\deploy.ps1 -Team <team> -StartAt S3` to deploy the current code |
-| Lobby Desk is not vacant | Someone already did the walkthrough | Click **Reset**, or follow *Without Reset* in part C |
-| **Reset** says old signature files could not be deleted | The API could not reach Blob Storage | The data was reset anyway. Check `/status`, then click **Reset** again |
-| *"… is not on shift."* when you hand over a post | The relief guard is Off Shift | Start the relief guard's shift first, so their badge is **Available** |
+| No guard to pick as cover or relief | Nobody at the site is **Available** | Sign in as an off-shift guard and start a shift first |
 
 ## Let Copilot drive the browser (optional)
 
 If you set up the `playwright` MCP server from the README, you can ask GitHub
-Copilot to run part C for you, for example:
+Copilot to run parts C and D for you, for example:
 
-> Open `<your web address>`, do the five walkthrough steps in demo.md on
-> Riverside Office Park, then confirm the supervisor board shows the signature
-> thumbnails.
-
-Copilot clicks through the same pages, draws the signatures and reports any page
-errors it finds.
+> Open `<your web address>` at tablet size. Follow parts C and D of demo.md with
+> the sign-in details there, then confirm the daily record shows the corrected
+> entry and every signature as Verified.

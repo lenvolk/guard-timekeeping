@@ -2,43 +2,102 @@
 {% block content %}
 <div class="card-head">
   <h1>{{ board.site.name }}</h1>
-  <span class="muted">Refreshes every {{ refresh_seconds }} seconds &middot; times in {{ tz }}</span>
+  <span class="muted">Refreshes every 10 seconds &middot; times in {{ tz }} &middot;
+    <a href="/audit/{{ board.site.id }}">Daily record</a></span>
 </div>
+{% if notice %}<p class="flash notice" role="status">{{ notice }}</p>{% endif %}
+{% if error %}<p class="flash error" role="alert">{{ error }}</p>{% endif %}
+
+{% set a = attention %}
+{% set count = a.overdue_breaks | length + a.long_shifts | length + a.pending_adjustments | length + a.locked_accounts | length %}
+<section class="card attention" data-attention-count="{{ count }}">
+  <h2>Needs attention{% if count %} <span class="count">{{ count }}</span>{% endif %}</h2>
+  {% if not count %}<p class="muted">Nothing needs attention.</p>{% endif %}
+
+  {% for b in a.overdue_breaks %}
+  <div class="attention-item overdue" data-break-id="{{ b.id }}">
+    <strong>Overdue break:</strong> {{ b.guard_name }}'s {{ break_labels[b.break_type] | lower }} is {{ b.overdue_minutes }} min over.
+    {{ b.cover_name }} is still covering {{ b.post_name }}.
+  </div>
+  {% endfor %}
+
+  {% for s in a.long_shifts %}
+  <div class="attention-item" data-shift-id="{{ s.id }}">
+    <strong>Long shift:</strong> <a href="/guard/{{ s.guard_id }}">{{ s.guard_name }}</a> has been on shift for {{ s.hours }} hours
+    (since {{ s.started_at | local_time(tz) }}). Possibly a missed end of shift.
+  </div>
+  {% endfor %}
+
+  {% for l in a.locked_accounts %}
+  <div class="attention-item overdue">
+    <strong>Locked account:</strong> {{ l.name }} ({{ l.badge }}) after too many wrong sign-in tries, until {{ l.locked_until | local_time(tz, "%H:%M") }}.
+  </div>
+  {% endfor %}
+
+  {% for adj in a.pending_adjustments %}
+  <div class="attention-item adjustment" data-adjustment-id="{{ adj.id }}" data-event-id="{{ adj.event_id }}">
+    <strong>Correction request:</strong> {{ adj.requested_by }} asks to change
+    <em>{{ adj.event_detail }}</em> from {{ adj.original_occurred_at | local_time(tz, "%H:%M") }}
+    to {{ adj.proposed_occurred_at | local_time(tz, "%H:%M") }}.
+    <br><strong>Reason:</strong> {{ adj.reason }}
+    <form method="post" action="/adjustments/{{ adj.id }}/decision" class="decision">
+      <input type="hidden" name="site_id" value="{{ board.site.id }}">
+      <label for="note-{{ adj.id }}">Note (required to reject)</label>
+      <input id="note-{{ adj.id }}" name="note" placeholder="For example: Checked the gate log.">
+      <span class="buttons">
+        <button type="submit" name="decision" value="approve">Approve</button>
+        <button type="submit" name="decision" value="reject" class="secondary">Reject</button>
+      </span>
+    </form>
+  </div>
+  {% endfor %}
+</section>
 
 <section class="card" data-site-id="{{ board.site.id }}">
   <h2>Posts</h2>
+  <div class="table-wrap">
   <table>
     <thead><tr><th>Post</th><th>Status</th><th>Guard</th><th>Since</th></tr></thead>
     <tbody>
       {% for p in board.posts %}
       <tr class="post" data-post-id="{{ p.id }}" data-post-state="{{ 'covered' if p.assignment_id else 'vacant' }}"
-          data-assignment-id="{{ p.assignment_id or '' }}" data-guard-id="{{ p.guard_id or '' }}">
+          data-assignment-id="{{ p.assignment_id or '' }}" data-guard-id="{{ p.guard_id or '' }}" data-break-id="{{ p.break_id or '' }}">
         <td>{{ p.name }}</td>
-        <td><span class="state state-{{ 'on-post' if p.assignment_id else 'vacant' }}">{{ 'Covered' if p.assignment_id else 'Vacant' }}</span></td>
-        <td>{% if p.guard_id %}<a href="/guard/{{ p.guard_id }}">{{ p.guard_name }}</a>{% endif %}</td>
+        <td>
+          {% if p.break_id %}
+          <span class="state state-covering{% if p.overdue_minutes %} state-overdue{% endif %}">Break cover</span>
+          {% else %}
+          <span class="state state-{{ 'on-post' if p.assignment_id else 'vacant' }}">{{ 'Covered' if p.assignment_id else 'Vacant' }}</span>
+          {% endif %}
+        </td>
+        <td>{% if p.guard_id %}<a href="/guard/{{ p.guard_id }}">{{ p.guard_name }}</a>{% endif %}
+          {% if p.break_id %}<span class="muted">for {{ p.on_break_name }}, back by {{ p.break_due_at | local_time(tz, "%H:%M") }}</span>{% endif %}</td>
         <td>{{ p.assigned_at | local_time(tz) }}</td>
       </tr>
       {% endfor %}
     </tbody>
   </table>
+  </div>
 </section>
 
 <section class="card">
   <h2>Guards</h2>
+  <div class="table-wrap">
   <table>
     <thead><tr><th>Guard</th><th>Badge</th><th>Status</th><th>Shift started</th></tr></thead>
     <tbody>
       {% for g in board.guards %}
-      <tr class="guard" data-guard-id="{{ g.id }}" data-guard-state="{{ g.state }}"
+      <tr class="guard" data-guard-id="{{ g.id }}" data-badge="{{ g.badge }}" data-guard-state="{{ g.state }}"
           data-assignment-id="{{ g.assignment_id or '' }}" data-post-id="{{ g.post_id or '' }}">
         <td><a href="/guard/{{ g.id }}">{{ g.name }}</a></td>
         <td>{{ g.badge }}</td>
-        <td><span class="state state-{{ g.state }}">{{ g.state | replace('-', ' ') }}{% if g.post_name %}: {{ g.post_name }}{% endif %}</span></td>
+        <td>{% include "_state.html" %}</td>
         <td>{{ g.shift_started_at | local_time(tz) }}</td>
       </tr>
       {% endfor %}
     </tbody>
   </table>
+  </div>
 </section>
 
 <section class="card">
@@ -47,7 +106,8 @@
   <ul class="events">
     {% for e in board.events %}
     <li data-event-id="{{ e.id }}" data-event-type="{{ e.event_type }}" data-has-signature="{{ 'true' if e.has_signature else 'false' }}">
-      <time>{{ e.occurred_at | local_time(tz) }}</time> {{ e.detail }}
+      <time>{{ (e.adjusted_at or e.occurred_at) | local_time(tz) }}</time> {{ e.detail }}
+      {% if e.adjusted_at %}<span class="tag">corrected, recorded at {{ e.occurred_at | local_time(tz, "%H:%M") }}</span>{% endif %}
       {% if e.has_signature %}<img class="signature-thumb" src="/signature/{{ e.id }}" alt="Signature of {{ e.signed_by_name }}" loading="lazy">{% endif %}
     </li>
     {% endfor %}

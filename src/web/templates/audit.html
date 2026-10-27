@@ -1,0 +1,73 @@
+{% extends "base.html" %}
+{% block content %}
+{% set s = record.summary %}
+<div class="card-head no-print">
+  <h1>Daily record</h1>
+  <span>
+    <a class="button secondary" href="/audit/{{ record.site.id }}?day={{ previous_day }}">&larr; Previous day</a>
+    <a class="button secondary" href="/audit/{{ record.site.id }}?day={{ next_day }}">Next day &rarr;</a>
+  </span>
+</div>
+<section class="card">
+  <h2>{{ record.site.name }} &middot; {{ record.day }}</h2>
+  <p class="muted">Times in {{ tz }}. Every entry is kept as recorded. A correction appears next to the original,
+    with its reason and the supervisor's decision.</p>
+  <dl class="audit-summary" data-events="{{ s.events }}" data-signed="{{ s.signed }}" data-verified="{{ s.verified }}"
+      data-problems="{{ s.problems }}" data-adjusted="{{ s.adjusted }}" data-pending="{{ s.pending }}">
+    <dt>Entries</dt><dd>{{ s.events }}</dd>
+    <dt>Signed</dt><dd>{{ s.signed }}, {{ s.verified }} verified{% if s.problems %}, <strong class="overdue">{{ s.problems }} failed the check</strong>{% endif %}</dd>
+    <dt>Corrected</dt><dd>{{ s.adjusted }} approved, {{ s.pending }} waiting</dd>
+  </dl>
+  <p class="no-print">
+    <a class="button" href="/audit/{{ record.site.id }}/export.csv?day={{ record.day }}">Export CSV</a>
+    <button type="button" class="secondary" onclick="window.print()">Print</button>
+  </p>
+</section>
+
+<section class="card">
+  {% if record.events %}
+  <div class="table-wrap">
+  <table class="audit">
+    <thead><tr><th>Time</th><th>Entry</th><th>Signature</th><th>Correction</th></tr></thead>
+    <tbody>
+      {% for e in record.events %}
+      {% set latest = e.adjustments[-1] if e.adjustments else None %}
+      <tr class="audit-row" data-event-id="{{ e.id }}" data-event-type="{{ e.event_type }}"
+          data-signature="{{ e.signature_check }}" data-adjustment="{{ latest.status if latest else '' }}"
+          data-original="{{ e.occurred_at }}" data-effective="{{ e.adjusted_at or e.occurred_at }}">
+        <td>
+          {% if e.adjusted_at %}
+          <strong>{{ e.adjusted_at | local_time(tz, "%H:%M") }}</strong><br>
+          <span class="muted"><s>{{ e.occurred_at | local_time(tz, "%H:%M:%S") }}</s> recorded</span>
+          {% else %}
+          {{ e.occurred_at | local_time(tz, "%H:%M:%S") }}
+          {% endif %}
+        </td>
+        <td>{{ e.detail }}<br><span class="muted">#{{ e.id }} &middot; {{ e.event_type }}{% if e.recorded_by %} &middot; recorded by {{ e.recorded_by }}{% endif %}</span></td>
+        <td>
+          {% if e.has_signature %}
+          <img class="signature-thumb" src="/signature/{{ e.id }}" alt="Signature of {{ e.signed_by_name }}" loading="lazy">
+          <span class="manifest">{{ e.signed_by_name }}, {{ e.occurred_at | local_time(tz) }}<br>{{ e.signature_meaning or '' }}</span>
+          <span class="tag sig-{{ e.signature_check }}">{{ {'verified': 'Verified', 'mismatch': 'Changed since signing', 'missing': 'Missing', 'unverified': 'No hash recorded'}[e.signature_check] }}</span>
+          {% else %}<span class="muted">Not signed</span>{% endif %}
+        </td>
+        <td>
+          {% for adj in e.adjustments %}
+          <div class="adjustment-history">
+            <span class="tag {{ adj.status }}">{{ adj.status }}</span>
+            {{ adj.original_occurred_at | local_time(tz, "%H:%M") }} &rarr; {{ adj.proposed_occurred_at | local_time(tz, "%H:%M") }}
+            by {{ adj.requested_by }}: {{ adj.reason }}
+            {% if adj.decided_by %}<br><span class="muted">{{ adj.status | capitalize }} by {{ adj.decided_by }}{% if adj.decision_note %}: {{ adj.decision_note }}{% endif %}</span>{% endif %}
+          </div>
+          {% endfor %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  {% else %}
+  <p class="muted">Nothing was recorded on this day.</p>
+  {% endif %}
+</section>
+{% endblock %}

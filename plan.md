@@ -91,7 +91,7 @@ Attendees learn:
 | D07 | On startup, the API creates its tables and loads seed data if the database is empty. No migration tool. | Keeps S3 to one code deployment. Production adds versioned migrations. |
 | D08 | `deploy.ps1` first asks for the team name, subscription and region, previews the resource names, then shows a summary and asks for the mode last, unless `-Mode Interactive` or `-Mode Autopilot` is passed. The mode menu also offers Cancel. Human in the loop prompts `Continue? (y/n)` after S0, S1, S2 and S3. Autopilot runs S0 to S3 without prompts. Cleanup (S4) never runs in Autopilot and always needs the typed team name. `-StartAt` resumes from a stage in either mode. | The runner sees every setting before choosing how to run. Gives a learning checkpoint per stage, or a single command for teams that fall behind. A checkpoint, not a security control. |
 | D09 | The scripts run in Windows PowerShell 5.1 and PowerShell 7. The only required tool is the Azure CLI with Bicep. | App Service builds the Python code, so laptops need no Python or Docker. |
-| D10 | Anonymous persona selection, with a "synthetic data" banner on every page. | No sign-in setup. Production adds Entra sign-in. |
+| D10 | Sign-in with employee ID and date of birth, with a "synthetic data" banner on every page. Only a salted hash is stored, with a lockout. | No Entra setup for attendees, and it shows identify and authority checks. A date of birth is a weak secret, so production uses Entra ID or a PIN (pilot.md). |
 | D11 | Python 3.12. FastAPI for the API. FastAPI with Jinja2 templates for the web app, which calls the API from the server. The signature pad is a small plain JavaScript file using an HTML canvas and pointer events, so it works with a mouse, pen or touch. The supervisor page reloads every 10 seconds. | One language and no JavaScript build step. |
 | D12 | Signatures for the demo: the guard signs to start a shift, the relief guard signs to accept a post, and the guard signs to end a shift. The witness at shift start is selected by name and does not sign. | Three signatures show the feature without slowing the walkthrough. |
 | D13 | Team name, subscription, region and team count are parameters with suggested defaults (section 6). If the runner omits one, the script asks and Enter accepts the default. Resource names include the team name and a short unique suffix. | The same repository works for a hackathon of any size or a single user. `eastus2` is the default because `eastus` often refuses new PostgreSQL Flexible servers. App, server and storage names must be globally unique. |
@@ -157,73 +157,98 @@ documentation and Bicep schemas while building.
 
 ## 5. Application scope
 
+The app follows one continuous transaction chain on a shared tablet at each site:
+**identify, transact, sign, supervise, audit**. Definition of done: works on a
+tablet, shows the normal path plus a controlled exception, produces a reviewable
+daily record, and explains security, recovery and the pilot path
+([pilot.md](pilot.md)).
+
 ### Walkthrough
 
-1. Open the web URL and see the synthetic-data banner.
-2. Pick a site and a guard persona.
-3. Start a shift. Pick a different guard as witness, confirm "equipment on" and
-   sign.
-4. Take a vacant post.
-5. Try to hand the post to a guard who is already on another post and see the
-   rejection. Then hand it to an available relief guard, who signs to accept.
-6. The original guard is still on shift but off post. Confirm "equipment off",
-   sign and end the shift.
-7. Open the supervisor board. It shows covered and vacant posts, guards on shift
-   and recent events with signature thumbnails.
-8. In the Azure portal, open the storage account's `signatures` container and see
-   the same PNG files.
-9. Refresh the page. The data is still there.
+1. Open the web URL and sign in with employee ID and date of birth.
+2. As a guard, start a shift: pick a different guard as witness, confirm
+   "equipment on" and sign.
+3. Take a vacant post.
+4. Take a lunch (60 min) or restroom (15 min) break. An available guard confirms
+   with their date of birth and signs to cover the post. Return and sign.
+5. Hand the post to an available relief guard, who confirms and signs to accept.
+6. End the shift with "equipment off" and a signature. Request a correction of a
+   time, with a reason.
+7. As a supervisor, approve or reject the correction under **Needs attention**.
+8. Open the daily record: original and corrected times side by side, every
+   signature with signer, time, meaning and a hash check, print and CSV export.
 
 ### Data
 
-Seed data has 2 sites, 4 posts (2 per site) and 12 fictional guards. Some guards
-start on shift so relief has an available candidate and a busy one.
+Seed data has 2 sites, 4 posts (2 per site), 12 fictional guards and 3
+supervisors (one per site, one regional). Some guards start on shift so relief has
+an available candidate and a busy one. Dates of birth are synthetic and stored
+only as salted PBKDF2 hashes.
 
-Tables: `sites`, `posts`, `guards`, `shifts`, `post_assignments`, `events`.
-`events` has nullable `signed_by_guard_id` and `signature_blob` columns.
+Tables: `sites`, `posts`, `guards`, `supervisors`, `shifts`, `post_assignments`,
+`breaks`, `events`, `adjustments`. `events` carries the signer, the signature
+blob name, its SHA-256, its meaning and who was signed in. `adjustments` holds
+correction requests and decisions. Events are never updated after commit.
 Partial unique indexes allow one open shift per guard, one open assignment per
-post and one open assignment per guard. A violation returns HTTP 409 with a clear
-message, which also stops double submissions.
+post, one open assignment per guard, one open break per guard and per cover guard,
+and one pending correction per event. A violation returns HTTP 409.
 
 ### Rules
 
-- The witness must be a different guard.
+- Sign-in: five wrong tries lock the ID for five minutes and record an event for
+  the supervisor. A guard is signed out after 2 idle minutes, a supervisor after 15.
+- A guard acts only for themselves. A supervisor sees only their site, unless
+  regional.
+- The witness must be a different guard at the same site.
 - A guard cannot start a second open shift.
-- To take a post, the guard must be on shift, not on another post and at the same
-  site, and the post must be vacant.
-- The relief guard must be on shift, not on a post, not the same guard and at the
-  same site. One transaction ends the old assignment and starts the new one.
+- To take a post, the guard must be on shift, not on a break, not on another post
+  and at the same site, and the post must be vacant.
+- A relief or cover guard must be on shift, not on a post, not on a break, at the
+  same site, and confirm with their own date of birth.
+- A break hands the post to the cover guard and gives it back on return. During a
+  break the guard cannot end the shift, and the cover guard cannot hand the post on,
+  take a break or end their shift.
 - A guard cannot end a shift while on a post.
-- Starting a shift, accepting relief and ending a shift each need a signature.
-- Each successful action writes one event in the same transaction.
+- Starting and ending a shift, accepting relief, covering a break and returning
+  from a break each need a signature with a recorded meaning.
+- A correction needs a reason. Rejecting one needs a note. The original event is
+  never changed.
+- Overdue breaks, shifts open for more than 12 hours, pending corrections and
+  locked IDs appear under **Needs attention**.
 - The server stores UTC timestamps. Pages show the site's time zone.
 - Signatures are images for the demo. They are not legally binding.
 
 ### API and pages
 
-API: `GET /healthz`, `GET /status` (database, storage and seed counts),
-`GET /sites`, `GET /sites/{id}/board`, `GET /guards/{id}`, `POST /shifts`,
-`POST /shifts/{id}/end`, `POST /assignments`, `POST /assignments/{id}/relieve`,
-`GET /events?site_id=`, `GET /events/{id}/signature` (streams the PNG),
-`POST /admin/reset` (deletes all activity and signatures, then loads the seed data
-again), `POST /admin/start-database` (starts the PostgreSQL server through Azure
-Resource Manager when it is stopped; the API identity has Contributor on that
-server only). When the database cannot be reached, `GET /status` also reports the
-server state, such as `Stopped` or `Starting`.
+Only the web app calls the API. Every route except `GET /healthz` and
+`GET /status` needs the shared key, and the web app passes the signed-in person in
+`X-Actor-*` headers, which the API checks on every action.
 
-Web pages: `/` (pick site and guard), `/guard/{id}`, `/supervisor/{site_id}`,
-`/signature/{event_id}` (proxies the PNG from the API), `/status` (shows whether
-the API, database and storage respond, and the seed counts; shows a Start database
-button when the server is stopped), `/reset` (asks for
-confirmation, then resets the demo data so the walkthrough can run again).
+API: `GET /healthz`, `GET /status` (database, storage and seed counts),
+`POST /auth/login`, `GET /sites`, `GET /sites/{id}/board`, `GET /guards/{id}`,
+`POST /shifts`, `POST /shifts/{id}/end`, `POST /assignments`,
+`POST /assignments/{id}/relieve`, `POST /breaks`, `POST /breaks/{id}/return`,
+`GET /events?site_id=`, `GET /events/{id}/signature` (streams the PNG),
+`POST /events/{id}/adjustments`, `POST /adjustments/{id}/decision`,
+`GET /sites/{id}/attention`, `GET /sites/{id}/daily?day=` (verifies each
+signature's hash), `POST /admin/reset` (supervisor; deletes all activity and
+signatures, then loads the seed data again), `POST /admin/start-database` (no
+sign-in, because nobody can sign in while the database is stopped; the API identity
+has Contributor on that server only). When the database cannot be reached,
+`GET /status` also reports the server state, such as `Stopped` or `Starting`.
+
+Web pages: `/signin`, `/signout`, `/` (supervisors: sites and guards),
+`/guard/{id}` (the guard's own page; read-only for supervisors),
+`/guard/{id}/correct/{event_id}`, `/supervisor/{site_id}` (board and Needs
+attention), `/audit/{site_id}?day=` and `/audit/{site_id}/export.csv`,
+`/signature/{event_id}`, `/status` (public), `/reset` (supervisors).
 
 ### Out of scope
 
-Sign-in, legally binding signatures, breaks and lunch, payroll, notifications,
-offline use, staffing recommendations, corrections, private networking,
+Legally binding signatures, payroll, pay and labor rules, notifications, offline
+use, staffing recommendations, private networking for PostgreSQL and the API,
 multi-region recovery, attendee code changes and a unit test suite. The scripted
-walkthrough in S3 is the only automated app test.
-
+walkthrough in S3 (`scripts/Test-Workflow.ps1`) is the only automated app test.
 ## 6. Scripts and stages
 
 ```powershell
@@ -407,14 +432,14 @@ Gate G5 turns this table into `docs/production-readiness.md`.
 |---|---|---|
 | Network | Public endpoints for PostgreSQL and the API. PostgreSQL allows any Azure service. The API is open to the internet. Only Blob Storage has a private endpoint. | VNet with App Service integration for both apps, private endpoints for PostgreSQL and the API, private DNS, and a deployment runner inside the VNet. |
 | Access control | One runner with Owner on the subscription. | RBAC per resource group: network team owns `rg-network`, DBAs own `rg-data`, app team owns `rg-app`. Deploy with scoped identities. |
-| User identity | Anonymous personas. | Entra sign-in, server-enforced roles, site boundaries. |
+| User identity | Employee ID and date of birth, roles and site boundaries enforced by the web app and the API. | Entra ID sign-in or a PIN, roles from Entra groups. |
 | Ingress | App Service default domain. | Front Door or Application Gateway with WAF. |
 | Database | API identity is the Entra admin. Tables created on startup. | Least-privilege roles, separate migration identity, versioned migrations, high availability, backups and tested restore. |
 | Signatures | PNG images, no legal standing. Runner can read them. | Approved e-signature requirements, retention, immutable storage, access auditing and least-privilege readers. |
 | Delivery | Laptop script with y/n prompts or Autopilot. | CI/CD with protected environments, required reviewers, what-if and artifact promotion. |
 | Hosting | One B1 plan, single region. | Premium plan, zone redundancy, autoscale and a recovery plan. |
 | Operations | Basic Application Insights. | Alerts, dashboards, budgets, runbooks and patching. |
-| Business rules | Simplified shift, post and relief rules. | Approved labor, break and pay rules, corrections, payroll integration. |
+| Business rules | Shift, post, relief and break rules, corrections with supervisor approval. | Approved labor, break and pay rules, payroll integration. |
 | Testing | One scripted walkthrough. | Unit, integration, security and load tests. |
 | Data | Synthetic records. | Data classification, privacy review and retention. |
 

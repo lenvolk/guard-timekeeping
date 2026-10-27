@@ -71,6 +71,14 @@ def ensure_setup() -> None:
                 if guard_count == 0:
                     seed.load(conn)
                     log.info("Loaded synthetic seed data.")
+                else:
+                    missing = conn.execute(
+                        "SELECT (SELECT count(*) FROM guards WHERE dob_hash IS NULL)"
+                        " + (SELECT CASE WHEN count(*) = 0 THEN 1 ELSE 0 END FROM supervisors) AS n"
+                    ).fetchone()["n"]
+                    if missing:
+                        seed.ensure_credentials(conn)
+                        log.info("Added sign-in data to existing seed data.")
                 conn.commit()
             except Exception:
                 conn.rollback()
@@ -95,8 +103,10 @@ def reset() -> dict:
         conn.execute("SELECT pg_advisory_lock(%s)", (SETUP_LOCK_KEY,))
         try:
             events = conn.execute("SELECT count(*) AS n FROM events").fetchone()["n"]
-            conn.execute("TRUNCATE events, post_assignments, shifts, guards, posts, sites")
-            for table in ("sites", "posts", "guards"):
+            conn.execute(
+                "TRUNCATE adjustments, breaks, events, post_assignments, shifts, supervisors, guards, posts, sites"
+            )
+            for table in ("sites", "posts", "guards", "supervisors"):
                 conn.execute(f"ALTER TABLE {table} ALTER COLUMN id RESTART")
             seed.load(conn)
             conn.commit()

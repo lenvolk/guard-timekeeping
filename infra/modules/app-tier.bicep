@@ -35,6 +35,14 @@ param signatureContainer string
 @description('Resource ID of the subnet, delegated to Microsoft.Web/serverFarms, that the API joins.')
 param apiSubnetId string
 
+@description('Shared key the web app sends to the API in the X-Timekeeping-Key header.')
+@secure()
+param apiSharedKey string
+
+@description('Signs the web app\'s session cookies.')
+@secure()
+param sessionSecret string
+
 var startupCommand = 'gunicorn -w 2 -k uvicorn.workers.UvicornWorker -b 0.0.0.0:8000 main:app'
 var diagnosticLogCategories = [
   'AppServiceHTTPLogs'
@@ -118,6 +126,10 @@ resource api 'Microsoft.Web/sites@2024-11-01' = {
           value: signatureContainer
         }
         {
+          name: 'API_SHARED_KEY'
+          value: apiSharedKey
+        }
+        {
           name: 'APPLICATIONINSIGHTS_CONNECTION_STRING'
           value: appInsights.properties.ConnectionString
         }
@@ -149,6 +161,14 @@ resource web 'Microsoft.Web/sites@2024-11-01' = {
         {
           name: 'API_BASE_URL'
           value: 'https://${api.properties.defaultHostName}'
+        }
+        {
+          name: 'API_SHARED_KEY'
+          value: apiSharedKey
+        }
+        {
+          name: 'SESSION_SECRET'
+          value: sessionSecret
         }
         {
           name: 'APPLICATIONINSIGHTS_CONNECTION_STRING'

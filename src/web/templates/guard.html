@@ -3,31 +3,79 @@
 {% set g = detail.guard %}
 {% set shift = detail.open_shift %}
 {% set assignment = detail.open_assignment %}
+{% set own_break = detail.open_break %}
+{% set covering = detail.covering %}
 {% macro signature_pad(pad_id, label) %}
 <div class="signature" data-signature-pad>
   <label for="{{ pad_id }}">{{ label }}</label>
-  <canvas id="{{ pad_id }}" class="signature-canvas" width="400" height="150"
-          aria-label="{{ label }}. Draw with a mouse, pen or finger."></canvas>
+  <canvas id="{{ pad_id }}" class="signature-canvas" width="560" height="200"
+          aria-label="{{ label }}. Draw with a finger, pen or mouse."></canvas>
   <input type="hidden" name="signature" value="">
   <button type="button" class="link" data-signature-clear>Clear signature</button>
 </div>
 {% endmacro %}
-<p><a href="/">&larr; All guards</a> &middot; <a href="/supervisor/{{ detail.site.id }}">Supervisor board</a></p>
+{% macro person_check(select_id, select_name, dob_name, role, people) %}
+<label for="{{ select_id }}">{{ role }}</label>
+<select id="{{ select_id }}" name="{{ select_name }}" required>
+  <option value="">Pick an available guard</option>
+  {% for other in people %}
+  <option value="{{ other.id }}">{{ other.name }} ({{ other.badge }})</option>
+  {% endfor %}
+</select>
+<label for="{{ select_id }}-dob">{{ role }}'s date of birth</label>
+<input id="{{ select_id }}-dob" name="{{ dob_name }}" type="password" placeholder="MM/DD/YYYY" inputmode="numeric"
+       autocomplete="off" required>
+{% endmacro %}
 
+{% if read_only %}<p><a href="/supervisor/{{ detail.site.id }}">&larr; Supervisor board</a></p>{% endif %}
 {% if notice %}<p class="flash notice" role="status">{{ notice }}</p>{% endif %}
 {% if error %}<p class="flash error" role="alert">{{ error }}</p>{% endif %}
 
 <section class="card guard-card" data-guard-id="{{ g.id }}" data-guard-state="{{ detail.state }}"
-         data-shift-id="{{ shift.id if shift else '' }}" data-assignment-id="{{ assignment.id if assignment else '' }}">
+         data-shift-id="{{ shift.id if shift else '' }}" data-assignment-id="{{ assignment.id if assignment else '' }}"
+         data-break-id="{{ own_break.id if own_break else '' }}">
   <h1>{{ g.name }}</h1>
   <p class="muted">{{ g.badge }} &middot; {{ detail.site.name }} &middot; times in {{ tz }}</p>
   <p>
+    {% if own_break %}
+    <span class="state state-on-break{% if own_break.overdue_minutes %} state-overdue{% endif %}">On {{ break_labels[own_break.break_type] | lower }}</span>
+    {% elif covering %}
+    <span class="state state-covering">Covering {{ covering.post_name }}</span>
+    {% else %}
     <span class="state state-{{ detail.state }}">{{ detail.state | replace('-', ' ') }}</span>
+    {% endif %}
     {% if shift %}On shift since {{ shift.started_at | local_time(tz) }}.{% endif %}
-    {% if assignment %}On {{ assignment.post_name }} since {{ assignment.started_at | local_time(tz) }}.{% endif %}
+    {% if assignment and not covering %}On {{ assignment.post_name }} since {{ assignment.started_at | local_time(tz) }}.{% endif %}
   </p>
 </section>
 
+{% if own_break %}
+<section class="card break-card">
+  <h2>{{ break_labels[own_break.break_type] }}</h2>
+  <p>Since {{ own_break.started_at | local_time(tz) }}, due back at {{ own_break.due_at | local_time(tz, "%H:%M") }}.
+    {{ own_break.cover_name }} is covering {{ own_break.post_name }}.</p>
+  {% if own_break.overdue_minutes %}<p class="flash error" role="alert">{{ own_break.overdue_minutes }} min over. The supervisor can see this.</p>{% endif %}
+  {% if not read_only %}
+  <form method="post" action="/guard/{{ g.id }}/return">
+    <input type="hidden" name="break_id" value="{{ own_break.id }}">
+    {{ signature_pad("sign-return", g.name ~ " signs to take " ~ own_break.post_name ~ " back") }}
+    <button type="submit" data-requires-signature disabled>Return from break</button>
+  </form>
+  {% endif %}
+</section>
+{% endif %}
+
+{% if covering %}
+<section class="card">
+  <h2>Covering {{ covering.post_name }}</h2>
+  <p>{{ g.name }} is covering for {{ covering.guard_name }}'s {{ break_labels[covering.break_type] | lower }},
+    due back at {{ covering.due_at | local_time(tz, "%H:%M") }}.
+    {% if covering.overdue_minutes %}<strong class="overdue">{{ covering.overdue_minutes }} min over.</strong>{% endif %}
+    When {{ covering.guard_name }} returns, {{ g.name }} is available again.</p>
+</section>
+{% endif %}
+
+{% if not read_only %}
 {% if not shift %}
 <section class="card">
   <h2>Start shift</h2>
@@ -46,7 +94,7 @@
 </section>
 {% endif %}
 
-{% if shift and not assignment %}
+{% if shift and not assignment and not own_break %}
 <section class="card">
   <h2>Take a post</h2>
   <form method="post" action="/guard/{{ g.id }}/take-post">
@@ -62,26 +110,44 @@
 </section>
 {% endif %}
 
-{% if assignment %}
+{% if assignment and not covering %}
+<section class="card">
+  <h2>Take a break</h2>
+  <p class="hint">An available guard covers {{ assignment.post_name }} while you are away, so the post is never empty.
+    The cover guard confirms with their date of birth and signs to accept the post.</p>
+  {% if available %}
+  <form method="post" action="/guard/{{ g.id }}/break" autocomplete="off">
+    <fieldset class="choice">
+      <legend>Break</legend>
+      <label class="check"><input type="radio" name="break_type" value="lunch" required> Lunch, 60 minutes</label>
+      <label class="check"><input type="radio" name="break_type" value="restroom" required> Restroom, 15 minutes</label>
+    </fieldset>
+    {{ person_check("cover", "cover_guard_id", "cover_dob", "Cover guard", available) }}
+    {{ signature_pad("sign-cover", "Cover guard signs to accept " ~ assignment.post_name) }}
+    <button type="submit" data-requires-signature disabled>Start break</button>
+  </form>
+  {% else %}
+  <p class="flash error" role="alert">No guard at this site is available to cover. A guard must start a shift first.</p>
+  {% endif %}
+</section>
+
 <section class="card">
   <h2>Hand over {{ assignment.post_name }}</h2>
-  <p class="hint">The relief guard must be on shift, off post and at this site. The relief guard signs to accept the post.</p>
-  <form method="post" action="/assignment/{{ assignment.id }}/relieve">
+  <p class="hint">The relief guard takes the post for the rest of the shift. They confirm with their date of birth and sign to accept it.</p>
+  {% if available %}
+  <form method="post" action="/assignment/{{ assignment.id }}/relieve" autocomplete="off">
     <input type="hidden" name="guard_id" value="{{ g.id }}">
-    <label for="relief">Relief guard</label>
-    <select id="relief" name="relief_guard_id" required>
-      <option value="">Pick a guard</option>
-      {% for other in board.guards if other.id != g.id %}
-      <option value="{{ other.id }}">{{ other.name }} ({{ other.state | replace('-', ' ') }}{% if other.post_name %}: {{ other.post_name }}{% endif %})</option>
-      {% endfor %}
-    </select>
-    {{ signature_pad("sign-relief", "Relief guard signs to accept the post") }}
+    {{ person_check("relief", "relief_guard_id", "relief_dob", "Relief guard", available) }}
+    {{ signature_pad("sign-relief", "Relief guard signs to accept " ~ assignment.post_name) }}
     <button type="submit" data-requires-signature disabled>Hand over post</button>
   </form>
+  {% else %}
+  <p class="flash error" role="alert">No guard at this site is available to take over.</p>
+  {% endif %}
 </section>
 {% endif %}
 
-{% if shift %}
+{% if shift and not own_break and not covering %}
 <section class="card">
   <h2>End shift</h2>
   <form method="post" action="/guard/{{ g.id }}/end-shift">
@@ -91,15 +157,26 @@
   </form>
 </section>
 {% endif %}
+{% endif %}
 
 <section class="card">
   <h2>Recent activity</h2>
   {% if detail.events %}
   <ul class="events">
     {% for e in detail.events %}
-    <li data-event-id="{{ e.id }}" data-event-type="{{ e.event_type }}" data-has-signature="{{ 'true' if e.has_signature else 'false' }}">
-      <time>{{ e.occurred_at | local_time(tz) }}</time> {{ e.detail }}
-      {% if e.has_signature %}<img class="signature-thumb" src="/signature/{{ e.id }}" alt="Signature of {{ e.signed_by_name }}" loading="lazy">{% endif %}
+    <li data-event-id="{{ e.id }}" data-event-type="{{ e.event_type }}" data-has-signature="{{ 'true' if e.has_signature else 'false' }}"
+        data-adjustment-status="{{ e.adjustment_status or '' }}">
+      <time>{{ (e.adjusted_at or e.occurred_at) | local_time(tz) }}</time> {{ e.detail }}
+      {% if e.adjusted_at %}<span class="tag">corrected, recorded at {{ e.occurred_at | local_time(tz, "%H:%M") }}</span>{% endif %}
+      {% if e.adjustment_status == 'pending' %}<span class="tag pending">correction to {{ e.adjustment_proposed_at | local_time(tz, "%H:%M") }} waiting for approval</span>{% endif %}
+      {% if e.adjustment_status == 'rejected' %}<span class="tag rejected">correction rejected</span>{% endif %}
+      {% if e.has_signature %}
+      <img class="signature-thumb" src="/signature/{{ e.id }}" alt="Signature of {{ e.signed_by_name }}" loading="lazy">
+      <span class="manifest">Signed by {{ e.signed_by_name }}, {{ e.occurred_at | local_time(tz) }}. {{ e.signature_meaning or '' }}</span>
+      {% endif %}
+      {% if not read_only and not e.event_type.startswith('adjustment_') and e.event_type != 'account_locked' and e.adjustment_status != 'pending' %}
+      <a class="small-link" href="/guard/{{ g.id }}/correct/{{ e.id }}">Request a correction</a>
+      {% endif %}
     </li>
     {% endfor %}
   </ul>

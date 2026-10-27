@@ -156,3 +156,82 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
   border-radius: 4px;
   background: #fff;
 }
+
+/* --- Tablet first: large touch targets, readable on a 10-inch screen --- */
+body { font-size: 17px; }
+input, select, textarea {
+  padding: 0.6rem 0.7rem;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  font: inherit;
+  min-height: 48px;
+  width: 100%;
+  background: #fff;
+}
+textarea { min-height: 6rem; }
+input[type="checkbox"], input[type="radio"] { width: 24px; height: 24px; min-height: 0; }
+button, .button { min-height: 48px; padding: 0.6rem 1.2rem; }
+button.small { min-height: 36px; padding: 0.3rem 0.8rem; font-size: 0.9rem; }
+form { max-width: 36rem; }
+label.check { min-height: 44px; }
+fieldset.choice { border: 1px solid var(--line); border-radius: 6px; padding: 0.5rem 1rem; margin: 0; }
+fieldset.choice legend { font-weight: 600; padding: 0 0.3rem; }
+.signature-canvas { max-width: 560px; aspect-ratio: 560 / 200; }
+
+.top { flex-wrap: wrap; gap: 0.5rem; }
+.top nav { display: flex; flex-wrap: wrap; align-items: center; gap: 0.25rem 1rem; }
+.top nav a { margin-left: 0; padding: 0.5rem 0; }
+form.inline { display: inline-flex; align-items: center; gap: 0.5rem; max-width: none; }
+.who { color: var(--muted); font-size: 0.9rem; }
+
+.signin { max-width: 30rem; margin: 2rem auto; }
+.table-wrap { overflow-x: auto; }
+
+/* --- New states --- */
+.state-on-break { color: #6b3fa0; }
+.state-covering { color: #0b5cad; }
+.state-overdue, .overdue { color: var(--bad) !important; font-weight: 700; }
+
+.tag {
+  display: inline-block;
+  margin-left: 0.4rem;
+  padding: 0 0.45rem;
+  border-radius: 4px;
+  font-size: 0.8rem;
+  background: #eef2f7;
+  color: var(--muted);
+}
+.tag.pending { background: #fff4ce; color: #7a5b00; }
+.tag.approved, .tag.sig-verified { background: #e3f9e5; color: #0e5a2c; }
+.tag.rejected, .tag.sig-mismatch, .tag.sig-missing { background: #fde8e8; color: var(--bad); }
+.manifest { display: block; font-size: 0.8rem; color: var(--muted); }
+.small-link { display: inline-block; margin-top: 0.3rem; font-size: 0.9rem; }
+
+.attention .count {
+  display: inline-block; min-width: 1.6rem; padding: 0 0.4rem; border-radius: 999px;
+  background: var(--bad); color: #fff; font-size: 0.9rem; text-align: center;
+}
+.attention-item { padding: 0.6rem 0; border-top: 1px solid var(--line); }
+.attention-item.overdue { color: var(--bad); }
+form.decision { margin-top: 0.5rem; }
+form.decision .buttons { display: flex; gap: 0.5rem; }
+
+dl.audit-summary { display: grid; grid-template-columns: 9rem 1fr; gap: 0.3rem 1rem; margin: 0.5rem 0; }
+dl.audit-summary dt { font-weight: 600; }
+dl.audit-summary dd { margin: 0; }
+table.audit td { vertical-align: top; }
+.adjustment-history { margin-bottom: 0.4rem; }
+
+@media (max-width: 700px) {
+  main { padding: 1rem; }
+  .guard-list li { flex-wrap: wrap; }
+  .guard-list li a { min-width: 0; }
+}
+
+/* --- Print the daily record for review and sign-off --- */
+@media print {
+  .banner, .top, .no-print, form.decision { display: none !important; }
+  body, main { background: #fff; max-width: none; padding: 0; font-size: 11pt; }
+  .card { border: none; padding: 0; }
+  .signature-thumb { height: 32px; }
+}

@@ -1,25 +1,28 @@
 #Requires -Version 5.1
 <#
 .SYNOPSIS
-    Runs the main guard workflow, with signatures, against the deployed website.
+    Runs the whole guard workflow, with sign-in and signatures, against the deployed website.
 
 .DESCRIPTION
-    Posts to the web form routes the way a browser does and checks each status code:
-    303 for an accepted action and 409 for an action the rules reject. Each signature
-    is a small PNG that this script draws, sent as a data URL in the "signature" field.
+    Posts to the web form routes the way a browser does, signed in as each person in
+    turn, and checks every status code: 303 for an accepted action, 401 or 409 for an
+    action the rules reject. Each signature is a small PNG that this script draws.
 
-    Main path, on a site with a vacant post:
-      1. Guard A starts a shift with a witness, equipment on and a signature.
-      2. Guard A takes the vacant post.
-      3. Rejected: guard A tries to hand the post to a guard who is on another post.
-      4. Guard B, who is on shift and off post, accepts the post with a signature.
-      5. Guard A ends the shift with equipment off and a signature.
-      6. The supervisor board shows the post covered by guard B and guard A off shift.
-      7. One signature is read back through the web app and checked as a PNG.
+    It covers the five steps of the transaction chain on the second site, so the first
+    site stays as seeded for the attendee walkthrough:
+      Identify   A wrong date of birth is rejected. Pages need a sign-in. A guard
+                 cannot open the supervisor board.
+      Transact   Guard A starts a shift and takes the vacant post (or is already on a post).
+                 Guard A starts a lunch break. A wrong cover date of birth is rejected,
+                 then guard B covers. Ending the shift during the break is rejected.
+                 Guard A returns, hands the post to guard B and ends the shift.
+      Sign       Every signed step stores a PNG, its SHA-256 and its meaning.
+      Supervise  Guard A requests a time correction. The supervisor approves it.
+      Audit      The daily record shows the original and corrected time, every
+                 signature verified, and exports as CSV.
 
-    Each run leaves one more post covered. When no site has a vacant post left, the
-    script relieves a guard who is already on a post and skips "take a post". It uses
-    the last site first, so the first site stays as seeded for the attendee walkthrough.
+    Each run leaves guard B on the post. Later runs start from a guard already on a post.
+    The credentials are the synthetic ones in src\api\seed.py and demo.md.
 
     Runs in Windows PowerShell 5.1 and PowerShell 7. Exits with code 1 on failure.
 
@@ -40,13 +43,16 @@ $WebUrl = $WebUrl.TrimEnd('/')
 
 Add-Type -AssemblyName System.Net.Http
 [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.ServicePointManager]::SecurityProtocol -bor [System.Net.SecurityProtocolType]::Tls12
-$handler = New-Object System.Net.Http.HttpClientHandler
-$handler.AllowAutoRedirect = $false
-$Http = New-Object System.Net.Http.HttpClient($handler)
-$Http.Timeout = [TimeSpan]::FromSeconds(100)
 
 $PngMagic = [byte[]](0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A)
 
+# Synthetic dates of birth from src\api\seed.py, used as passwords for this demo only.
+$Credentials = @{
+    'G-2001' = '12/02/1987'; 'G-2002' = '04/26/1990'; 'G-2003' = '08/11/1984'
+    'G-2004' = '02/19/1992'; 'G-2005' = '10/03/1995'; 'G-2006' = '06/28/1982'
+    'S-2001' = '10/10/1983'
+}
+$Supervisor = 'S-2001'
 # --- Signature image ----------------------------------------------------------------
 
 $CrcTable = New-Object 'uint32[]' 256
@@ -138,13 +144,26 @@ function New-SignatureDataUrl {
     return 'data:image/png;base64,' + [Convert]::ToBase64String($png.ToArray())
 }
 
+
 # --- HTTP helpers ------------------------------------------------------------------------
+
+# A new client per person, so each sign-in has its own session cookie.
+function New-Session {
+    $handler = New-Object System.Net.Http.HttpClientHandler
+    $handler.AllowAutoRedirect = $false
+    $handler.CookieContainer = New-Object System.Net.CookieContainer
+    $client = New-Object System.Net.Http.HttpClient($handler)
+    $client.Timeout = [TimeSpan]::FromSeconds(100)
+    return $client
+}
+
+$script:Http = New-Session
 
 function Invoke-Page {
     param([string]$Method, [string]$Path, [hashtable]$Form)
     $url = '{0}{1}' -f $WebUrl, $Path
     if ($Method -eq 'GET') {
-        $response = $Http.GetAsync($url).GetAwaiter().GetResult()
+        $response = $script:Http.GetAsync($url).GetAwaiter().GetResult()
     }
     else {
         $pairs = New-Object 'System.Collections.Generic.List[System.Collections.Generic.KeyValuePair[string,string]]'
@@ -152,16 +171,19 @@ function Invoke-Page {
             $pairs.Add((New-Object 'System.Collections.Generic.KeyValuePair[string,string]' -ArgumentList $key, ([string]$Form[$key])))
         }
         $content = New-Object System.Net.Http.FormUrlEncodedContent -ArgumentList (, $pairs)
-        $response = $Http.PostAsync($url, $content).GetAwaiter().GetResult()
+        $response = $script:Http.PostAsync($url, $content).GetAwaiter().GetResult()
     }
     $bytes = $response.Content.ReadAsByteArrayAsync().GetAwaiter().GetResult()
     $contentType = ''
     if ($response.Content.Headers.ContentType) { $contentType = $response.Content.Headers.ContentType.MediaType }
+    $location = ''
+    if ($response.Headers.Location) { $location = $response.Headers.Location.ToString() }
     return [pscustomobject]@{
         Status      = [int]$response.StatusCode
         Body        = [System.Text.Encoding]::UTF8.GetString($bytes)
         Bytes       = $bytes
         ContentType = $contentType
+        Location    = $location
     }
 }
 
@@ -184,38 +206,14 @@ function Get-PageMessage {
     return ''
 }
 
-function Get-Board {
-    param([string]$SiteId)
-    $page = Invoke-Page GET ('/supervisor/{0}' -f $SiteId)
-    if ($page.Status -ne 200) { throw ('Supervisor board for site {0} returned HTTP {1}.' -f $SiteId, $page.Status) }
-    $events = @([regex]::Matches($page.Body, '<li data-event-id="(\d+)"[^>]*data-has-signature="(true|false)"') |
-        ForEach-Object { [pscustomobject]@{ Id = $_.Groups[1].Value; Signed = ($_.Groups[2].Value -eq 'true') } })
-    return [pscustomobject]@{
-        SiteId = $SiteId
-        Posts  = @(Get-DataAttributes $page.Body 'post')
-        Guards = @(Get-DataAttributes $page.Body 'guard')
-        Events = $events
+function Assert-State {
+    param([string]$Name, $Passed, [string]$Detail)
+    if (-not $Passed) {
+        Write-Host ('  [FAIL] {0}: {1}' -f $Name, $Detail) -ForegroundColor Red
+        throw ('Check failed: {0}' -f $Name)
     }
-}
-
-function Get-GuardsInState {
-    param($Board, [string]$State)
-    return @($Board.Guards | Where-Object { $_['data-guard-state'] -eq $State })
-}
-
-function Get-OtherGuard {
-    param($Board, [string[]]$Exclude)
-    $other = @($Board.Guards | Where-Object { $Exclude -notcontains $_['data-guard-id'] }) | Select-Object -First 1
-    if ($other) { return $other['data-guard-id'] }
-    return $null
-}
-
-function Get-AssignmentId {
-    param([string]$GuardId)
-    $page = Invoke-Page GET ('/guard/{0}' -f $GuardId)
-    $card = @(Get-DataAttributes $page.Body 'guard-card') | Select-Object -First 1
-    if (-not $card -or -not $card['data-assignment-id']) { throw ('Guard {0} has no open assignment.' -f $GuardId) }
-    return $card['data-assignment-id']
+    Write-Host '  [PASS] ' -ForegroundColor Green -NoNewline
+    Write-Host $Name
 }
 
 function Invoke-Step {
@@ -227,150 +225,155 @@ function Invoke-Step {
         throw ('Step failed: {0}' -f $Name)
     }
     Write-Host '  [PASS] ' -ForegroundColor Green -NoNewline
-    if ($Expected -eq 409) {
-        Write-Host ('{0} (HTTP 409: {1})' -f $Name, $message)
-    }
-    else {
-        Write-Host ('{0} (HTTP {1})' -f $Name, $Expected)
-    }
+    if ($Expected -ge 400) { Write-Host ('{0} (HTTP {1}: {2})' -f $Name, $Expected, $message) }
+    else { Write-Host ('{0} (HTTP {1})' -f $Name, $Expected) }
+    return $response
 }
 
-function Assert-State {
-    param([string]$Name, $Passed, [string]$Detail)
-    if (-not $Passed) {
-        Write-Host ('  [FAIL] {0}: {1}' -f $Name, $Detail) -ForegroundColor Red
-        throw ('Check failed: {0}' -f $Name)
-    }
-    Write-Host '  [PASS] ' -ForegroundColor Green -NoNewline
-    Write-Host $Name
+# Signs in with a fresh session and returns where the app sent this person.
+function Use-Person {
+    param([string]$Badge)
+    $script:Http.Dispose()
+    $script:Http = New-Session
+    $response = Invoke-Page POST '/signin' @{ badge = $Badge; dob = $Credentials[$Badge]; next = '' }
+    if ($response.Status -ne 303) { throw ('Sign-in as {0} failed: HTTP {1}. {2}' -f $Badge, $response.Status, (Get-PageMessage $response.Body)) }
+    Write-Host ('  Signed in as {0}' -f $Badge) -ForegroundColor Gray
+    return $response.Location
 }
 
-function Invoke-RejectedRelief {
-    param($Board, [string]$AssignmentId, [string]$OnPostGuard, [string]$Signature)
-    $busy = @(Get-GuardsInState $Board 'on-post' | Where-Object { $_['data-guard-id'] -ne $OnPostGuard }) | Select-Object -First 1
-    if ($busy) {
-        $busyId = $busy['data-guard-id']
-        Invoke-Step ('Rejected: hand the post to guard {0}, who is on another post' -f $busyId) ('/assignment/{0}/relieve' -f $AssignmentId) @{ guard_id = $OnPostGuard; relief_guard_id = $busyId; signature = $Signature } 409
-    }
-    else {
-        Invoke-Step ('Rejected: guard {0} hands the post to themselves' -f $OnPostGuard) ('/assignment/{0}/relieve' -f $AssignmentId) @{ guard_id = $OnPostGuard; relief_guard_id = $OnPostGuard; signature = $Signature } 409
+function Get-Board {
+    param([string]$SiteId)
+    $page = Invoke-Page GET ('/supervisor/{0}' -f $SiteId)
+    if ($page.Status -ne 200) { throw ('Supervisor board for site {0} returned HTTP {1}.' -f $SiteId, $page.Status) }
+    return [pscustomobject]@{
+        Posts       = @(Get-DataAttributes $page.Body 'post')
+        Guards      = @(Get-DataAttributes $page.Body 'guard')
+        Adjustments = @(Get-DataAttributes $page.Body 'attention-item adjustment')
     }
 }
 
-# Returns a guard who is on shift and off post, starting a shift for one if needed.
-function Get-ReliefGuard {
-    param($Board, [string[]]$Exclude)
-    $available = @(Get-GuardsInState $Board 'available' | Where-Object { $Exclude -notcontains $_['data-guard-id'] }) | Select-Object -First 1
-    if ($available) { return $available['data-guard-id'] }
-    $offShift = @(Get-GuardsInState $Board 'off-shift' | Where-Object { $Exclude -notcontains $_['data-guard-id'] }) | Select-Object -First 1
-    if (-not $offShift) { throw 'No guard is free to act as relief.' }
-    $relief = $offShift['data-guard-id']
-    $witness = Get-OtherGuard $Board (@($relief) + $Exclude)
-    if (-not $witness) { $witness = $Exclude[0] }
-    Invoke-Step ('Relief guard {0} starts a shift with a signature' -f $relief) ('/guard/{0}/start-shift' -f $relief) @{ witness_guard_id = $witness; equipment_on = 'on'; signature = (New-SignatureDataUrl 4) } 303
-    return $relief
+function Get-GuardCard {
+    param([string]$GuardId)
+    $page = Invoke-Page GET ('/guard/{0}' -f $GuardId)
+    if ($page.Status -ne 200) { throw ('Guard page {0} returned HTTP {1}.' -f $GuardId, $page.Status) }
+    $card = @(Get-DataAttributes $page.Body 'guard-card') | Select-Object -First 1
+    $events = @([regex]::Matches($page.Body, '<li data-event-id="(\d+)" data-event-type="([a-z_]+)"') |
+        ForEach-Object { [pscustomobject]@{ Id = $_.Groups[1].Value; Type = $_.Groups[2].Value } })
+    return [pscustomobject]@{ Card = $card; Events = $events }
 }
 
-function Assert-Coverage {
-    param([string]$SiteId, [string]$PostId, [string]$CoveredBy, [string]$OffShiftGuard)
-    $after = Get-Board $SiteId
-    $postAfter = @($after.Posts | Where-Object { $_['data-post-id'] -eq $PostId })[0]
-    $guardAfter = @($after.Guards | Where-Object { $_['data-guard-id'] -eq $OffShiftGuard })[0]
-    Assert-State ('Supervisor board shows post {0} covered by guard {1}' -f $PostId, $CoveredBy) ($postAfter['data-guard-id'] -eq $CoveredBy) ('covered by {0}' -f $postAfter['data-guard-id'])
-    Assert-State ('Supervisor board shows guard {0} off shift' -f $OffShiftGuard) ($guardAfter['data-guard-state'] -eq 'off-shift') $guardAfter['data-guard-state']
-    return $after
+function Get-GuardBy {
+    param($Board, [string]$State, [string[]]$Exclude)
+    return @($Board.Guards | Where-Object { $_['data-guard-state'] -eq $State -and $Exclude -notcontains $_['data-guard-id'] }) | Select-Object -First 1
 }
 
-function Assert-SignatureReadBack {
-    param($Board)
-    $signed = @($Board.Events | Where-Object { $_.Signed }) | Select-Object -First 1
-    Assert-State 'Supervisor board lists a signed event' ([bool]$signed) 'no signed events found'
-    $image = Invoke-Page GET ('/signature/{0}' -f $signed.Id)
-    $isPng = $image.Bytes.Length -ge 8
-    for ($i = 0; $isPng -and $i -lt 8; $i++) { if ($image.Bytes[$i] -ne $PngMagic[$i]) { $isPng = $false } }
-    $ok = ($image.Status -eq 200) -and ($image.ContentType -eq 'image/png') -and $isPng
-    Assert-State ('Signature for event {0} reads back from Blob Storage as a PNG' -f $signed.Id) $ok ('HTTP {0}, {1}, {2} bytes' -f $image.Status, $image.ContentType, $image.Bytes.Length)
-}
-
-function Invoke-MainPath {
-    param($Board)
-    $siteId = $Board.SiteId
-    $post = @($Board.Posts | Where-Object { $_['data-post-state'] -eq 'vacant' })[0]
-    $postId = $post['data-post-id']
-    $guardA = @(Get-GuardsInState $Board 'off-shift')[0]['data-guard-id']
-    $witness = Get-OtherGuard $Board @($guardA)
-    Write-Host ('Site {0}: guard {1} takes vacant post {2}, then hands it to a relief guard.' -f $siteId, $guardA, $postId)
-
-    Invoke-Step ('Guard {0} starts a shift with a signature' -f $guardA) ('/guard/{0}/start-shift' -f $guardA) @{ witness_guard_id = $witness; equipment_on = 'on'; signature = (New-SignatureDataUrl 1) } 303
-    Invoke-Step ('Guard {0} takes post {1}' -f $guardA, $postId) ('/guard/{0}/take-post' -f $guardA) @{ post_id = $postId } 303
-    $assignmentId = Get-AssignmentId $guardA
-
-    $current = Get-Board $siteId
-    Invoke-RejectedRelief $current $assignmentId $guardA (New-SignatureDataUrl 2)
-    $guardB = Get-ReliefGuard $current @($guardA)
-    Invoke-Step ('Guard {0} accepts post {1} with a signature' -f $guardB, $postId) ('/assignment/{0}/relieve' -f $assignmentId) @{ guard_id = $guardA; relief_guard_id = $guardB; signature = (New-SignatureDataUrl 3) } 303
-    Invoke-Step ('Guard {0} ends the shift with a signature' -f $guardA) ('/guard/{0}/end-shift' -f $guardA) @{ equipment_off = 'on'; signature = (New-SignatureDataUrl 5) } 303
-
-    $after = Assert-Coverage $siteId $postId $guardB $guardA
-    Assert-SignatureReadBack $after
-}
-
-function Invoke-ReliefPath {
-    param($Board)
-    $siteId = $Board.SiteId
-    $post = @($Board.Posts | Where-Object { $_['data-post-state'] -eq 'covered' })[0]
-    $postId = $post['data-post-id']
-    $assignmentId = $post['data-assignment-id']
-    $onPost = $post['data-guard-id']
-    Write-Host 'No site has a vacant post left, so "take a post" is skipped.' -ForegroundColor Yellow
-    Write-Host ('Site {0}: a relief guard takes over post {1} from guard {2}.' -f $siteId, $postId, $onPost)
-
-    Invoke-RejectedRelief $Board $assignmentId $onPost (New-SignatureDataUrl 2)
-    $relief = Get-ReliefGuard $Board @($onPost)
-    Invoke-Step ('Guard {0} accepts post {1} with a signature' -f $relief, $postId) ('/assignment/{0}/relieve' -f $assignmentId) @{ guard_id = $onPost; relief_guard_id = $relief; signature = (New-SignatureDataUrl 3) } 303
-    Invoke-Step ('Guard {0} ends the shift with a signature' -f $onPost) ('/guard/{0}/end-shift' -f $onPost) @{ equipment_off = 'on'; signature = (New-SignatureDataUrl 5) } 303
-
-    $after = Assert-Coverage $siteId $postId $relief $onPost
-    Assert-SignatureReadBack $after
-}
+# --- Workflow ------------------------------------------------------------------------------
 
 Write-Host ('Workflow test against {0}' -f $WebUrl)
 try {
+    Write-Host 'Identify'
     $status = Invoke-Page GET '/status'
     Assert-State 'Status page reports the API, database and storage are up' ($status.Status -eq 200) ('HTTP {0}' -f $status.Status)
+    $anonymous = Invoke-Page GET '/guard/1'
+    Assert-State 'A guard page without sign-in redirects to the sign-in page' ($anonymous.Status -eq 303 -and $anonymous.Location -like '/signin*') ('HTTP {0} to {1}' -f $anonymous.Status, $anonymous.Location)
+    $null = Invoke-Step 'Rejected: sign in with a wrong date of birth' '/signin' @{ badge = 'G-2001'; dob = '01/01/2000'; next = '' } 401
 
-    $homePage = Invoke-Page GET '/'
-    $siteIds = @(Get-DataAttributes $homePage.Body 'site' | ForEach-Object { $_['data-site-id'] } |
-        Sort-Object { [int]$_ } -Descending)
-    Assert-State ('Home page lists {0} sites' -f $siteIds.Count) ($siteIds.Count -gt 0) 'no sites found'
+    $landing = Use-Person $Supervisor
+    $siteId = ($landing -split '/')[-1]
+    Assert-State ('Supervisor {0} lands on the board for site {1}' -f $Supervisor, $siteId) ($landing -match '^/supervisor/\d+$') $landing
+    $board = Get-Board $siteId
 
-    $boards = @($siteIds | ForEach-Object { Get-Board $_ })
-    $free = { param($b) @(Get-GuardsInState $b 'off-shift').Count + @(Get-GuardsInState $b 'available').Count }
-    $mainBoard = $boards | Where-Object {
-        @($_.Posts | Where-Object { $_['data-post-state'] -eq 'vacant' }).Count -ge 1 -and
-        @(Get-GuardsInState $_ 'off-shift').Count -ge 1 -and
-        (& $free $_) -ge 2
-    } | Select-Object -First 1
-
-    if ($mainBoard) {
-        Invoke-MainPath $mainBoard
+    $vacant = @($board.Posts | Where-Object { $_['data-post-state'] -eq 'vacant' }) | Select-Object -First 1
+    if ($vacant) {
+        $guardA = Get-GuardBy $board 'off-shift' @()
     }
     else {
-        $reliefBoard = $boards | Where-Object {
-            @($_.Posts | Where-Object { $_['data-post-state'] -eq 'covered' }).Count -ge 1 -and
-            (& $free $_) -ge 1
-        } | Select-Object -First 1
-        if (-not $reliefBoard) { throw 'No site has the free guards and posts this test needs.' }
-        Invoke-ReliefPath $reliefBoard
+        $guardA = Get-GuardBy $board 'on-post' @()
+        Write-Host '  No vacant post left, so guard A starts on a post and "take a post" is skipped.' -ForegroundColor Yellow
     }
+    if (-not $guardA) { throw 'No guard is free to run the workflow on this site.' }
+    $aId = $guardA['data-guard-id']; $aBadge = $guardA['data-badge']
+    $guardB = Get-GuardBy $board 'available' @($aId)
+    $bNeedsShift = $false
+    if (-not $guardB) { $guardB = Get-GuardBy $board 'off-shift' @($aId); $bNeedsShift = $true }
+    if (-not $guardB) { throw 'No guard can cover or relieve guard A.' }
+    $bId = $guardB['data-guard-id']; $bBadge = $guardB['data-badge']
+    $witness = @($board.Guards | Where-Object { @($aId, $bId) -notcontains $_['data-guard-id'] })[0]['data-guard-id']
+    Write-Host ('  Guard A {0}, cover and relief guard B {1}' -f $aBadge, $bBadge)
+
+    Write-Host 'Transact and sign'
+    if ($bNeedsShift) {
+        $null = Use-Person $bBadge
+        $null = Invoke-Step ('{0} starts a shift with a signature' -f $bBadge) ('/guard/{0}/start-shift' -f $bId) @{ witness_guard_id = $aId; equipment_on = 'on'; signature = (New-SignatureDataUrl 4) } 303
+    }
+    $null = Use-Person $aBadge
+    $forbidden = Invoke-Page GET ('/supervisor/{0}' -f $siteId)
+    Assert-State 'A guard cannot open the supervisor board' ($forbidden.Status -eq 403) ('HTTP {0}' -f $forbidden.Status)
+    if ($vacant) {
+        $null = Invoke-Step ('{0} starts a shift with a signature' -f $aBadge) ('/guard/{0}/start-shift' -f $aId) @{ witness_guard_id = $witness; equipment_on = 'on'; signature = (New-SignatureDataUrl 1) } 303
+        $null = Invoke-Step ('{0} takes the vacant post' -f $aBadge) ('/guard/{0}/take-post' -f $aId) @{ post_id = $vacant['data-post-id'] } 303
+    }
+    $null = Invoke-Step ('Rejected: lunch break with a wrong date of birth for cover guard {0}' -f $bBadge) ('/guard/{0}/break' -f $aId) @{ break_type = 'lunch'; cover_guard_id = $bId; cover_dob = '01/01/2000'; signature = (New-SignatureDataUrl 2) } 401
+    $null = Invoke-Step ('{0} starts a lunch break, {1} covers and signs' -f $aBadge, $bBadge) ('/guard/{0}/break' -f $aId) @{ break_type = 'lunch'; cover_guard_id = $bId; cover_dob = $Credentials[$bBadge]; signature = (New-SignatureDataUrl 2) } 303
+    $onBreak = Get-GuardCard $aId
+    Assert-State ('{0} shows as on break' -f $aBadge) ($onBreak.Card['data-guard-state'] -eq 'on-break' -and $onBreak.Card['data-break-id']) $onBreak.Card['data-guard-state']
+    $null = Invoke-Step 'Rejected: end the shift during the break' ('/guard/{0}/end-shift' -f $aId) @{ equipment_off = 'on'; signature = (New-SignatureDataUrl 5) } 409
+    $null = Invoke-Step ('{0} returns from the break with a signature' -f $aBadge) ('/guard/{0}/return' -f $aId) @{ break_id = $onBreak.Card['data-break-id']; signature = (New-SignatureDataUrl 6) } 303
+    $back = Get-GuardCard $aId
+    Assert-State ('{0} is back on the post' -f $aBadge) ($back.Card['data-guard-state'] -eq 'on-post') $back.Card['data-guard-state']
+    $null = Invoke-Step ('{0} hands the post to {1}, who confirms and signs' -f $aBadge, $bBadge) ('/assignment/{0}/relieve' -f $back.Card['data-assignment-id']) @{ guard_id = $aId; relief_guard_id = $bId; relief_dob = $Credentials[$bBadge]; signature = (New-SignatureDataUrl 3) } 303
+    $null = Invoke-Step ('{0} ends the shift with a signature' -f $aBadge) ('/guard/{0}/end-shift' -f $aId) @{ equipment_off = 'on'; signature = (New-SignatureDataUrl 5) } 303
+
+    Write-Host 'Supervise'
+    $ended = (Get-GuardCard $aId).Events | Where-Object { $_.Type -eq 'shift_ended' } | Select-Object -First 1
+    Assert-State 'The end of shift appears in recent activity' ([bool]$ended) 'no shift_ended event'
+    $form = Invoke-Page GET ('/guard/{0}/correct/{1}' -f $aId, $ended.Id)
+    $recorded = [regex]::Match($form.Body, 'name="proposed_time" type="time" value="(\d{2}):(\d{2})"')
+    $minutes = [int]$recorded.Groups[1].Value * 60 + [int]$recorded.Groups[2].Value
+    $corrected = if ($minutes -ge 2) { $minutes - 2 } else { $minutes + 1 }
+    $proposed = '{0:D2}:{1:D2}' -f [int][math]::Floor($corrected / 60), [int]($corrected % 60)
+    $null = Invoke-Step ('{0} asks to correct the end of shift to {1}' -f $aBadge, $proposed) ('/guard/{0}/correct/{1}' -f $aId, $ended.Id) @{ proposed_time = $proposed; reason = 'Workflow test: the tablet was busy.' } 303
+
+    $null = Use-Person $Supervisor
+    $board = Get-Board $siteId
+    $request = @($board.Adjustments | Where-Object { $_['data-event-id'] -eq $ended.Id }) | Select-Object -First 1
+    Assert-State 'The correction waits on the supervisor board' ([bool]$request) 'not listed under Needs attention'
+    $null = Invoke-Step 'Rejected: reject the correction without a note' ('/adjustments/{0}/decision' -f $request['data-adjustment-id']) @{ site_id = $siteId; decision = 'reject'; note = '' } 400
+    $null = Invoke-Step 'The supervisor approves the correction' ('/adjustments/{0}/decision' -f $request['data-adjustment-id']) @{ site_id = $siteId; decision = 'approve'; note = 'Workflow test.' } 303
+    $board = Get-Board $siteId
+    $post = @($board.Posts | Where-Object { $_['data-guard-id'] -eq $bId }) | Select-Object -First 1
+    $aRow = @($board.Guards | Where-Object { $_['data-guard-id'] -eq $aId })[0]
+    Assert-State ('The board shows {0} on the post and {1} off shift' -f $bBadge, $aBadge) ($post -and $aRow['data-guard-state'] -eq 'off-shift') ('A is {0}' -f $aRow['data-guard-state'])
+
+    Write-Host 'Audit'
+    $audit = Invoke-Page GET ('/audit/{0}' -f $siteId)
+    Assert-State 'The daily record opens' ($audit.Status -eq 200) ('HTTP {0}' -f $audit.Status)
+    $rows = @(Get-DataAttributes $audit.Body 'audit-row')
+    $summary = @(Get-DataAttributes $audit.Body 'audit-summary')[0]
+    $correctedRow = @($rows | Where-Object { $_['data-event-id'] -eq $ended.Id })[0]
+    Assert-State 'The daily record keeps the original time next to the approved correction' ($correctedRow -and $correctedRow['data-adjustment'] -eq 'approved' -and $correctedRow['data-original'] -ne $correctedRow['data-effective']) 'original or correction missing'
+    foreach ($type in 'break_started', 'break_ended', 'post_relieved') {
+        Assert-State ('The daily record lists {0}' -f $type) (@($rows | Where-Object { $_['data-event-type'] -eq $type }).Count -ge 1) 'missing'
+    }
+    Assert-State ('Every signature verifies against its hash ({0} verified)' -f $summary['data-verified']) ([int]$summary['data-verified'] -ge 4 -and [int]$summary['data-problems'] -eq 0) ('{0} verified, {1} problems' -f $summary['data-verified'], $summary['data-problems'])
+    $csv = Invoke-Page GET ('/audit/{0}/export.csv' -f $siteId)
+    Assert-State 'The daily record exports as CSV' ($csv.Status -eq 200 -and $csv.ContentType -eq 'text/csv' -and $csv.Body -match 'signature_meaning' -and $csv.Body -match ('(?m)^[^,]*,[^,]*,{0},' -f $ended.Id)) ('HTTP {0}, {1}' -f $csv.Status, $csv.ContentType)
+    $signed = @($rows | Where-Object { $_['data-signature'] -eq 'verified' })[0]
+    $image = Invoke-Page GET ('/signature/{0}' -f $signed['data-event-id'])
+    $isPng = $image.Bytes.Length -ge 8
+    for ($i = 0; $isPng -and $i -lt 8; $i++) { if ($image.Bytes[$i] -ne $PngMagic[$i]) { $isPng = $false } }
+    Assert-State ('Signature for event {0} reads back from Blob Storage as a PNG' -f $signed['data-event-id']) ($image.Status -eq 200 -and $isPng) ('HTTP {0}, {1} bytes' -f $image.Status, $image.Bytes.Length)
+    $null = Invoke-Page POST '/signout' @{}
 }
 catch {
     Write-Host ('Workflow test failed: {0}' -f $_.Exception.Message) -ForegroundColor Red
     exit 1
 }
 finally {
-    $Http.Dispose()
+    $script:Http.Dispose()
 }
 
 Write-Host 'Workflow test passed.' -ForegroundColor Green
 exit 0
+
+

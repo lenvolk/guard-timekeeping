@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  {% if refresh_seconds %}<meta http-equiv="refresh" content="{{ refresh_seconds }}">{% endif %}
+  {% if refresh_seconds %}<meta http-equiv="refresh" content="{{ refresh_seconds }};url={{ refresh_url }}">{% endif %}
   <title>{{ title }} | Timekeeping</title>
   {# .path keeps the URL relative. App Service ends TLS, so a full URL would say http:// and be blocked. #}
   <link rel="stylesheet" href="{{ url_for('static', path='style.css').path }}">
@@ -15,9 +15,25 @@
   <header class="top">
     <a class="brand" href="/">Timekeeping</a>
     <nav>
+      {% if user and user.kind == 'guard' %}
+      <a href="/guard/{{ user.id }}">My shift</a>
+      {% elif user %}
       <a href="/">Sites and guards</a>
-      <a href="/status">Status</a>
+      {% if user.site_id %}
+      <a href="/supervisor/{{ user.site_id }}">Supervisor board</a>
+      <a href="/audit/{{ user.site_id }}">Daily record</a>
+      {% endif %}
       <a href="/reset">Reset</a>
+      {% endif %}
+      <a href="/status">Status</a>
+      {% if user %}
+      <form method="post" action="/signout" class="inline">
+        <span class="who" data-user-kind="{{ user.kind }}" data-user-badge="{{ user.badge }}">{{ user.name }} ({{ user.badge }})</span>
+        <button type="submit" class="secondary small">Sign out</button>
+      </form>
+      {% else %}
+      <a href="/signin">Sign in</a>
+      {% endif %}
     </nav>
   </header>
   <main>
