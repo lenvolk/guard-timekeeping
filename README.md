@@ -59,16 +59,25 @@ It then asks for any value you leave out. Press Enter to accept the default.
 | `-Mode` | `Interactive` (or `Autopilot`) |
 | `-Team` | `team01` |
 | `-SubscriptionId` | Your current `az account` subscription |
-| `-Location` | `eastus2` |
+| `-Location` | Picked from a list (see below) |
 | `-StartAt` | `S0` |
 
 If a team falls behind, `.\deploy.ps1 -Team team01 -Mode Autopilot -StartAt S2`
 catches up from S2. For a hackathon, `.\scripts\Test-Prerequisites.ps1 -TeamCount 5`
 checks regional quota for five teams. Give each team its own `-Team` name.
 
-If the preflight says PostgreSQL does not accept new servers in your region, pick
-another region with `-Location`, for example `centralus` or `westus3`. Some
-subscriptions block new PostgreSQL servers in eastus2 and eastus.
+When you leave out `-Location`, both scripts list common US regions and mark which
+ones accept a new PostgreSQL server in your subscription. Some subscriptions block
+PostgreSQL in regions such as eastus and eastus2. Type a number from the list, a
+region name such as `centralus`, or the portal name such as `Central US`:
+
+```text
+   [1] eastus           East US            not available: this subscription cannot create PostgreSQL here
+   [2] eastus2          East US 2          not available: this subscription cannot create PostgreSQL here
+   [3] centralus        Central US         ok
+   ...
+   Pick a number or type a region [centralus]:
+```
 
 ## Prerequisites
 

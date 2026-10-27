@@ -20,7 +20,9 @@
     Subscription to check. Default: the current "az account show" subscription.
 
 .PARAMETER Location
-    Azure region. Default: eastus2.
+    Azure region name, for example centralus. A portal display name such as
+    "Central US" also works. Without it, the script lists suggested regions, shows
+    which ones accept a new PostgreSQL server, and asks you to pick one.
 
 .PARAMETER TeamCount
     Number of teams that will deploy in this subscription and region. Default: 1.
@@ -78,6 +80,8 @@ function Read-Value {
     if ([string]::IsNullOrWhiteSpace($answer)) { return $Default }
     return $answer.Trim()
 }
+
+. (Join-Path $PSScriptRoot 'Regions.ps1')
 
 # Runs az and returns stdout as one string. Throws with the az error text on failure.
 # Works the same way in Windows PowerShell 5.1 and PowerShell 7.
@@ -228,10 +232,19 @@ catch {
     Write-Result WARN ('Could not read your permissions: {0}. {1}' -f $_.Exception.Message, $roleHelp)
 }
 
-if (-not $Location) {
-    $Location = Read-Value 'Region' $DefaultLocation
+$regions = @(Invoke-AzJson account list-locations -o json)
+if ($Location) {
+    $resolved = Resolve-RegionName $Location $regions
+    if (-not $resolved) {
+        Write-Result FAIL ('"{0}" is not an Azure region for this subscription. Use a region name such as {1}, or run the script without -Location to pick from a list.' -f $Location, ($SuggestedRegions -join ', '))
+        exit 1
+    }
+    $Location = $resolved
 }
-$Location = $Location.ToLowerInvariant()
+else {
+    $Location = Read-Region 'Region' $DefaultLocation $account.id $regions
+}
+$region = $regions | Where-Object { $_.name -eq $Location } | Select-Object -First 1
 
 if ($TeamCount -lt 1) {
     $teamCountText = Read-Value 'Number of teams' $DefaultTeamCount
@@ -241,13 +254,6 @@ if ($TeamCount -lt 1) {
         exit 1
     }
     $TeamCount = $parsed
-}
-
-$regions = @(Invoke-AzJson account list-locations -o json)
-$region = $regions | Where-Object { $_.name -eq $Location } | Select-Object -First 1
-if (-not $region) {
-    Write-Result FAIL ('"{0}" is not an Azure region name for this subscription. Example: {1}' -f $Location, $DefaultLocation)
-    exit 1
 }
 Write-Result PASS ('Region: {0} ({1}), quota checked for {2} team(s)' -f $region.name, $region.displayName, $TeamCount)
 
@@ -269,22 +275,11 @@ foreach ($provider in $RequiredProviders) {
 
 # --- Region offers the SKUs ---------------------------------------------------
 try {
-    $capabilities = @(Invoke-AzJson postgres flexible-server list-skus --location $Location -o json)
-    $skuNames = @()
-    $offerRestricted = $false
-    foreach ($capability in $capabilities) {
-        $editions = @($capability.supportedServerEditions) + @($capability.supportedFlexibleServerEditions) |
-            Where-Object { $_ -and $_.name -eq 'Burstable' }
-        foreach ($edition in $editions) {
-            $skuNames += @($edition.supportedServerSkus | ForEach-Object { $_.name })
-        }
-        $restriction = @($capability.supportedFeatures) | Where-Object { $_ -and $_.name -eq 'OfferRestricted' }
-        if ($restriction -and $restriction.status -eq 'Enabled') { $offerRestricted = $true }
+    $offer = Get-PostgresOffer (Invoke-AzJson postgres flexible-server list-skus --location $Location -o json)
+    if ($offer -eq 'Restricted') {
+        Write-Result FAIL ('PostgreSQL Flexible Server does not accept new servers in {0} for this subscription. Run scripts\Test-Prerequisites.ps1 without -Location to see which regions do.' -f $Location)
     }
-    if ($offerRestricted) {
-        Write-Result FAIL ('PostgreSQL Flexible Server does not accept new servers in {0} for this subscription. Pick another region, for example {1}.' -f $Location, $DefaultLocation)
-    }
-    elseif ($skuNames -contains 'Standard_B1ms') {
+    elseif ($offer -eq 'Ok') {
         Write-Result PASS ('PostgreSQL Flexible Server Burstable B1ms offered in {0}' -f $Location)
     }
     else {

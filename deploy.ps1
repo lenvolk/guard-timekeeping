@@ -15,7 +15,7 @@
     skip their question, and Enter accepts the default in brackets:
       1. Team name. Every resource name is built from it.
       2. Subscription.
-      3. Region.
+      3. Region. Pick from a list that shows which regions accept a new PostgreSQL server.
       4. Resource names. The script shows the names the team name produces and asks
          you to confirm them. Answer n to pick a different team name. When -Team is
          passed, the names are shown without the question.
@@ -41,7 +41,9 @@
     Default: the current "az account show" subscription.
 
 .PARAMETER Location
-    Azure region. Default: eastus2.
+    Azure region name, for example centralus. A portal display name such as
+    "Central US" also works. Without it, the script lists suggested regions, shows
+    which ones accept a new PostgreSQL server, and asks you to pick one.
 
 .PARAMETER StartAt
     Stage to start from. Default: S0. -StartAt S4 runs cleanup only.
@@ -396,6 +398,8 @@ function Get-DataAttributes {
 
 # --- Settings ----------------------------------------------------------------------------
 
+. (Join-Path $PSScriptRoot 'scripts\Regions.ps1')
+
 function Test-TeamName {
     param([string]$Value)
     return ($Value -cmatch '^[a-z0-9]{3,10}$')
@@ -715,7 +719,7 @@ if ($Team) {
         exit 1
     }
 }
-if ($Location) { $Location = $Location.Trim().ToLowerInvariant() }
+if ($Location) { $Location = $Location.Trim() }
 # A team name from the command line means the names are already decided.
 $teamFromParameter = [bool]$Team
 
@@ -758,19 +762,19 @@ while (-not $namesConfirmed) {
         }
     }
     else {
-        $regionNames = @(Invoke-AzJson account list-locations --query '[].name' -o json)
-        if ($Location -and $regionNames -notcontains $Location) {
-            Write-Host ('"{0}" is not a region name. Examples: eastus2, centralus, westus3.' -f $Location) -ForegroundColor Red
-            exit 1
+        $regions = @(Invoke-AzJson account list-locations -o json)
+        if ($Location) {
+            $resolved = Resolve-RegionName $Location $regions
+            if (-not $resolved) {
+                Write-Host ('"{0}" is not an Azure region for this subscription. Use a region name such as {1}, or leave out -Location to pick from a list.' -f $Location, ($SuggestedRegions -join ', ')) -ForegroundColor Red
+                exit 1
+            }
+            $Location = $resolved
         }
-        if (-not $Location) {
+        else {
             $defaultLocation = $DefaultLocation
             if ($saved -and $saved.location) { $defaultLocation = $saved.location }
-            do {
-                $Location = (Read-Value '3. Region' $defaultLocation).ToLowerInvariant()
-                $locationValid = $regionNames -contains $Location
-                if (-not $locationValid) { Write-Host ('"{0}" is not a region name. Examples: eastus2, centralus, westus3.' -f $Location) }
-            } until ($locationValid)
+            $Location = Read-Region '3. Region' $defaultLocation $SubscriptionId $regions
         }
     }
     if ($saved -and $saved.location -and $saved.location -ne $Location) {
