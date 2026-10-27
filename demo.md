@@ -60,33 +60,66 @@ Open `https://<your web address>/status`. Every row should say **ok**:
 ## C. Walk through it in a browser
 
 There is no sign-in. You act as a guard by clicking their name on the home page.
-Use **Riverside Office Park**. A new deployment starts like this:
+Each guard has a badge that shows where they are:
 
-- Priya Hollis is on the Main Gate post.
-- Marcus Ferrin is on shift with no post, so he can act as a relief guard.
-- Lobby Desk is vacant.
+| Badge | Meaning | What the guard can do next |
+|---|---|---|
+| **Off Shift** | Not working | Start a shift |
+| **Available** | On shift, no post | Take a vacant post, or accept a post as the relief guard |
+| **On Post: …** | On shift and covering a post | Hand the post to an **Available** guard, then end the shift |
 
 Each signature box needs a drawing. Use the mouse, a pen or a finger. The submit
 button stays grey until you sign.
 
-1. **Start a shift.** On the home page, click **Jordan Avila**. Under *Start shift*,
-   pick any other guard as the witness, tick **Equipment on**, sign, then click
-   **Start shift**.
-   You see: *Shift started.* Recent activity shows the event with your signature.
+### First walkthrough on a new deployment
+
+Use **Riverside Office Park**. After a new deployment the home page shows:
+
+| Guard | Badge |
+|---|---|
+| Jordan Avila | Off Shift. You start his shift in step 1 |
+| Priya Hollis | On Post: Main Gate |
+| Marcus Ferrin | Available. He is the relief guard in step 3 |
+| Elena Brandt, Tomas Reyna, Grace Okafor | Off Shift |
+
+Lobby Desk is the vacant post.
+
+1. **Start a shift.** Click **Jordan Avila**. Under *Start shift*, pick any other
+   guard as the witness, tick **Equipment on**, sign, then click **Start shift**.
+   You see: *Shift started.* Jordan's badge changes from Off Shift to
+   **Available**.
 2. **Take a post.** Under *Take a post*, choose **Lobby Desk**, then click
    **Take post**.
-   You see: Jordan is on post at Lobby Desk.
+   You see: Jordan is **On Post: Lobby Desk**.
 3. **Hand over the post.** Under *Hand over Lobby Desk*, pick **Marcus Ferrin** as
    the relief guard. The signature box is now Marcus's: he signs to accept the
    post. Click **Hand over post**.
-   You see: *Post handed over to the relief guard.*
-4. **End the shift.** Tick **Equipment off**, sign as Jordan, then click
-   **End shift**.
-   You see: *Shift ended.* Jordan is off shift.
+   You see: *Post handed over to the relief guard.* Marcus is now
+   **On Post: Lobby Desk** and Jordan is **Available** again.
+4. **End the shift.** Still on Jordan's page, tick **Equipment off**, sign as
+   Jordan, then click **End shift**.
+   You see: *Shift ended.* Jordan is **Off Shift**.
 5. **Check the supervisor board.** Click **Supervisor board** at the top of the
    page. The board refreshes every 10 seconds.
    You see: Lobby Desk is covered by Marcus Ferrin, Jordan Avila is off shift, and
    the recent events have signature thumbnails.
+
+### If someone already tested this deployment
+
+A hand-over keeps a post covered, so after the first walkthrough there is no
+vacant post. Skip *Take a post* and use any site:
+
+1. Find a guard with an **On Post** badge. This is the guard who leaves.
+2. Pick an **Off Shift** guard at the same site and start their shift (step 1
+   above). Their badge becomes **Available**.
+3. Open the guard who leaves. Hand the post to the guard you just started. They
+   sign to accept (step 3 above).
+4. Still on that page, end the shift of the guard who leaves (step 4 above).
+5. Check the supervisor board.
+
+For example, if Elena Brandt is **On Post: Lobby Desk** and Marcus Ferrin is
+**Off Shift**: start Marcus's shift, hand Lobby Desk from Elena to Marcus, then
+end Elena's shift.
 
 The thumbnails are the proof that storage works. The browser loads each one from
 the web app, which asks the API, which reads the PNG from Blob Storage through the
@@ -100,6 +133,7 @@ The API refuses actions that break the rules, shows a message and saves nothing:
   *"… is still on … Hand the post to a relief guard before ending the shift."*
 - As a guard who is on shift, pick a post someone else covers and click
   **Take post**: *"… is already covered by …"*
+- Hand a post to a guard who is **Off Shift**: *"… is not on shift."*
 
 ## See the data in the Azure portal (optional)
 
@@ -126,7 +160,8 @@ To watch requests as you click, open `rg-<team>-app`, then `appi-<team>`, then
 | `/status` says storage **error** | The storage role is still being applied, or the private endpoint is missing | Wait 5 minutes. If it stays, run `.\deploy.ps1 -Team <team> -StartAt S2` |
 | `/status` says database **error** | The API identity is not the PostgreSQL admin yet | Run `.\deploy.ps1 -Team <team> -StartAt S2` |
 | The page has no styling, or the signature box does not draw | The browser blocked the stylesheet or script | Run `.\deploy.ps1 -Team <team> -StartAt S3` to deploy the current code |
-| Lobby Desk is not vacant | Someone already did the walkthrough. A hand-over keeps a post covered, so posts do not become vacant again | Skip step 2: start a shift for an off-shift guard, have the guard on Lobby Desk hand it to them (step 3), then end the first guard's shift (step 4) |
+| Lobby Desk is not vacant | Someone already did the walkthrough | Follow *If someone already tested this deployment* in part C |
+| *"… is not on shift."* when you hand over a post | The relief guard is Off Shift | Start the relief guard's shift first, so their badge is **Available** |
 
 ## Let Copilot drive the browser (optional)
 

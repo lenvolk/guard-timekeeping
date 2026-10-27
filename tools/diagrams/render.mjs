@@ -80,10 +80,10 @@ const architecture = [
 // ---------- diagram 4: how to test (demo.md) ----------
 const SW = 230, SG = 50;
 const steps = [
-  ['s1', '1  Start shift\nJordan Avila\nwitness + signature', 'Shift started.'],
-  ['s2', '2  Take post\nLobby Desk\n(vacant)', 'Jordan: On post'],
-  ['s3', '3  Hand over\nto Marcus Ferrin,\nwho signs', 'Post handed over\nto the relief guard.'],
-  ['s4', '4  End shift\nJordan Avila\nsigns', 'Shift ended.'],
+  ['s1', '1  Start shift\nJordan Avila\nwitness + signature', 'Jordan: Off Shift\n-> Available'],
+  ['s2', '2  Take post\nLobby Desk\n(vacant)', 'Jordan: Available\n-> On Post'],
+  ['s3', '3  Hand over\nto Marcus Ferrin\n(Available), he signs', 'Marcus: On Post\nJordan: Available'],
+  ['s4', '4  End shift\nJordan Avila\nsigns', 'Jordan: Available\n-> Off Shift'],
   ['s5', '5  Check\nsupervisor board', 'Lobby Desk: Marcus,\nsignature thumbnails'],
 ];
 const testFlow = [
@@ -91,12 +91,12 @@ const testFlow = [
   box('w1', 40, 70, 420, 100, 'A  Automatic\ndeploy.ps1 S3 runs\nscripts\\Test-Workflow.ps1', '#d3f9d8', { fs: 18, stroke: '#2f9e44' }),
   box('w2', 500, 70, 420, 100, 'B  Status page  /status\nAPI, database and storage\nall say ok', '#e7f5ff', { fs: 18, stroke: '#1971c2' }),
   box('w3', 960, 70, 430, 100, 'C  By hand in a browser\nthe five steps below,\nRiverside Office Park', '#fff3bf', { fs: 18, stroke: '#f08c00' }),
-  caption('c_steps', 40, 200, 1350, 30, 'C: the guard walkthrough. You act as each guard by clicking their name. There is no sign-in.', 18),
+  caption('c_steps', 40, 200, 1350, 30, 'C: first walkthrough on a new deployment. You act as each guard by clicking their name. There is no sign-in.', 18),
 ];
 steps.forEach(([id, label, see], i) => {
   const x = 40 + i * (SW + SG);
   testFlow.push(box(id, x, 245, SW, 110, label, i === 4 ? '#d0bfff' : '#ffec99', { fs: 18 }));
-  testFlow.push(caption(`${id}c`, x, 365, SW, 50, `You see: ${see}`, 15, '#2f9e44'));
+  testFlow.push(caption(`${id}c`, x, 365, SW, 50, see, 15, '#2f9e44'));
   if (i < steps.length - 1) testFlow.push(arrow(`as${i}`, x + SW, 300, [[0, 0], [SG, 0]]));
 });
 testFlow.push(
