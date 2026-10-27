@@ -186,7 +186,8 @@ To watch requests as you click, open `rg-<team>-app`, then `appi-<team>`, then
 |---|---|---|
 | The site does not load, or returns 503, right after S3 | The apps are still starting | Wait 2 to 3 minutes and refresh |
 | `/status` says storage **error** | The storage role is still being applied, or the private endpoint is missing | Wait 5 minutes. If it stays, run `.\deploy.ps1 -Team <team> -StartAt S2` |
-| `/status` says database **error** | The API identity is not the PostgreSQL admin yet | Run `.\deploy.ps1 -Team <team> -StartAt S2` |
+| Every page says *The database is not available*, on a deployment that worked before | The PostgreSQL server is **Stopped**. Some subscriptions run automation that stops idle servers overnight | Open **Status**. It says *The database server is stopped*. Select **Start database** and wait about 2 minutes. The page refreshes by itself and turns green |
+| `/status` says database **error** right after a deployment | The API identity is not the PostgreSQL admin yet | Run `.\deploy.ps1 -Team <team> -StartAt S2` |
 | The page has no styling, or the signature box does not draw | The browser blocked the stylesheet or script | Run `.\deploy.ps1 -Team <team> -StartAt S3` to deploy the current code |
 | Lobby Desk is not vacant | Someone already did the walkthrough | Click **Reset**, or follow *Without Reset* in part C |
 | **Reset** says old signature files could not be deleted | The API could not reach Blob Storage | The data was reset anyway. Check `/status`, then click **Reset** again |

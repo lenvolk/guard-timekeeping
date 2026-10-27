@@ -206,11 +206,15 @@ API: `GET /healthz`, `GET /status` (database, storage and seed counts),
 `POST /shifts/{id}/end`, `POST /assignments`, `POST /assignments/{id}/relieve`,
 `GET /events?site_id=`, `GET /events/{id}/signature` (streams the PNG),
 `POST /admin/reset` (deletes all activity and signatures, then loads the seed data
-again).
+again), `POST /admin/start-database` (starts the PostgreSQL server through Azure
+Resource Manager when it is stopped; the API identity has Contributor on that
+server only). When the database cannot be reached, `GET /status` also reports the
+server state, such as `Stopped` or `Starting`.
 
 Web pages: `/` (pick site and guard), `/guard/{id}`, `/supervisor/{site_id}`,
 `/signature/{event_id}` (proxies the PNG from the API), `/status` (shows whether
-the API, database and storage respond, and the seed counts), `/reset` (asks for
+the API, database and storage respond, and the seed counts; shows a Start database
+button when the server is stopped), `/reset` (asks for
 confirmation, then resets the demo data so the walkthrough can run again).
 
 ### Out of scope

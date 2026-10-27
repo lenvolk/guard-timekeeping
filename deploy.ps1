@@ -355,7 +355,11 @@ function Get-RunnerPrincipal {
         return [pscustomobject]@{ Id = $id.Trim(); Type = 'User' }
     }
     catch {
-        throw ('Could not read your Microsoft Entra object ID, which S2 needs for the storage role assignment. {0}' -f $_.Exception.Message)
+        $hint = ''
+        if ($_.Exception.Message -match 'InteractionRequired|TokenCreatedWithOutdatedPolicies|AADSTS') {
+            $hint = ' Your Azure CLI sign-in needs refreshing. Run "az login", then resume.'
+        }
+        throw ('Could not read your Microsoft Entra object ID, which S2 needs for the storage role assignment. {0}{1}' -f $_.Exception.Message, $hint)
     }
 }
 
@@ -470,7 +474,26 @@ function Invoke-S0 {
     Complete-StageChecks 'S0'
 }
 
+# Some subscriptions run automation that stops idle PostgreSQL servers overnight.
+# A rerun of S1, S2 or S3 against a stopped server fails, so start it first.
+function Start-PostgresIfStopped {
+    if (-not $script:Names) { return }
+    $group = $script:Names.dataRg
+    $serverName = $script:Names.postgresServer
+    try {
+        $state = Invoke-Az postgres flexible-server show --resource-group $group --name $serverName --query state -o tsv
+    }
+    catch {
+        return
+    }
+    if ($state.Trim() -ne 'Stopped') { return }
+    Write-Info ('PostgreSQL {0} is stopped. Starting it, which takes about 2 minutes.' -f $serverName)
+    Invoke-AzLive postgres flexible-server start --resource-group $group --name $serverName --only-show-errors --output none
+    Write-Info ('PostgreSQL {0} started.' -f $serverName)
+}
+
 function Invoke-S1 {
+    Start-PostgresIfStopped
     Write-Info 'PostgreSQL usually takes 10 to 15 minutes. Explore the data group in the portal while you wait.'
     $o = Invoke-StageDeployment -Stage 'S1' -TemplateFile 'infra\s1-data.bicep' -Parameters @(
         ('team={0}' -f $Team), ('location={0}' -f $Location))
@@ -503,6 +526,7 @@ function Invoke-S1 {
 }
 
 function Invoke-S2 {
+    Start-PostgresIfStopped
     $runner = Get-RunnerPrincipal
     Write-Info ('Runner {0} ({1}) gets Storage Blob Data Reader on the storage account.' -f $runner.Id, $runner.Type)
     $o = Invoke-StageDeployment -Stage 'S2' -TemplateFile 'infra\s2-app.bicep' -Parameters @(
@@ -526,6 +550,10 @@ function Invoke-S2 {
     $admins = Invoke-AzJson rest --method get --url ('{0}/administrators?api-version={1}' -f $serverId, $PostgresApiVersion) -o json
     $admin = @($admins.value) | Where-Object { $_.name -eq $principalId -or $_.properties.objectId -eq $principalId } | Select-Object -First 1
     Write-Check 'API identity is the PostgreSQL Entra administrator' ([bool]$admin) $admin.properties.principalName
+
+    $serverAssignments = @(Invoke-AzJson role assignment list --scope $serverId --fill-role-definition-name -o json)
+    $serverRole = $serverAssignments | Where-Object { $_.principalId -eq $principalId -and $_.roleDefinitionName -eq 'Contributor' } | Select-Object -First 1
+    Write-Check 'Role assignment: API identity, Contributor on the PostgreSQL server (Status page can start it)' ([bool]$serverRole) $o.postgresServerName
 
     $assignments = @(Invoke-AzJson role assignment list --scope $o.storageAccountId --fill-role-definition-name -o json)
     $apiRole = $assignments | Where-Object { $_.principalId -eq $principalId -and $_.roleDefinitionName -eq 'Storage Blob Data Contributor' } | Select-Object -First 1
@@ -557,6 +585,7 @@ function Invoke-S2 {
 }
 
 function Invoke-S3 {
+    Start-PostgresIfStopped
     $o = Get-DeploymentOutputs ('tk-{0}-s2' -f $Team)
     $webUrl = 'https://{0}' -f $o.webHostName
     $script:WebUrl = $webUrl

@@ -34,9 +34,14 @@ NOTICES = {
     "relieved": "Post handed over to the relief guard.",
     "shift-ended": "Shift ended.",
     "reset": "Demo data reset. Every guard and post is back to where a new deployment starts.",
+    "starting": "Starting the database server. It takes about 2 minutes. This page refreshes by itself.",
 }
 # Deleting many signature files can take longer than a normal page.
 RESET_TIMEOUT_SECONDS = 120
+# A stopped database makes the API wait for its connection timeout before it reports.
+STATUS_TIMEOUT_SECONDS = 45
+# States in which Azure is still changing the server, so the Status page keeps refreshing.
+BUSY_SERVER_STATES = {"Starting", "Stopping", "Updating", "Restarting", "Provisioning"}
 
 app = FastAPI(title="Timekeeping", docs_url=None, redoc_url=None, openapi_url=None)
 app.mount("/static", StaticFiles(directory=BASE_DIR / "static"), name="static")
@@ -225,11 +230,11 @@ def reset(request: Request):
 
 
 @app.get("/status", response_class=HTMLResponse)
-def status(request: Request):
+def status(request: Request, notice: str | None = None):
     result = {"api": "error", "database": "error", "storage": "error", "counts": {}, "messages": [],
-              "api_host": API_BASE_URL}
+              "api_host": API_BASE_URL, "database_server": "", "notice": NOTICES.get(notice or "")}
     try:
-        response = session.get(f"{API_BASE_URL}/status", timeout=API_TIMEOUT_SECONDS)
+        response = session.get(f"{API_BASE_URL}/status", timeout=STATUS_TIMEOUT_SECONDS)
         if response.status_code in (200, 503):
             result["api"] = "ok"
             body = response.json()
@@ -237,8 +242,17 @@ def status(request: Request):
             result["database"] = "ok" if body.get("database") == "ok" else "error"
             result["storage"] = "ok" if body.get("storage") == "ok" else "error"
             result["counts"] = body.get("counts") or {}
+            result["database_server"] = body.get("database_server") or ""
             if result["database"] != "ok":
-                result["messages"].append(f"The API cannot reach the database ({errors.get('database', 'unknown error')}).")
+                server_state = result["database_server"]
+                if server_state == "Stopped":
+                    result["messages"].append("The database server is stopped. Select Start database to start it.")
+                elif server_state in BUSY_SERVER_STATES:
+                    result["messages"].append(f"The database server is {server_state.lower()}. This page refreshes by itself.")
+                else:
+                    result["messages"].append(f"The API cannot reach the database ({errors.get('database', 'unknown error')}).")
+                if errors.get("database_server"):
+                    result["messages"].append(errors["database_server"])
             if result["storage"] != "ok":
                 result["messages"].append(
                     f"The API cannot read signature storage ({errors.get('storage', 'unknown error')}). "
@@ -249,4 +263,22 @@ def status(request: Request):
     except (requests.RequestException, ValueError) as exc:
         result["messages"].append(f"The web app could not reach the API ({type(exc).__name__}).")
     healthy = result["api"] == "ok" and result["database"] == "ok" and result["storage"] == "ok"
-    return render(request, "status.html", {"title": "Status", **result}, 200 if healthy else 503)
+    if healthy and notice == "starting":
+        result["notice"] = "The database server is running again."
+    context = {"title": "Status", **result}
+    # Keep refreshing while the server starts, so the page turns green by itself.
+    if not healthy and (result["database_server"] in BUSY_SERVER_STATES or notice == "starting"):
+        context["refresh_seconds"] = 20
+    return render(request, "status.html", context, 200 if healthy else 503)
+
+
+@app.post("/status/start-database")
+def start_database(request: Request):
+    try:
+        call_api("POST", "/admin/start-database", timeout=STATUS_TIMEOUT_SECONDS)
+    except ApiError as exc:
+        return render(request, "status.html", {"title": "Status", "api": "ok", "database": "error",
+                                               "storage": "", "counts": {}, "api_host": API_BASE_URL,
+                                               "database_server": "", "notice": None,
+                                               "messages": [exc.detail]}, 502)
+    return RedirectResponse("/status?notice=starting", status_code=303)

@@ -51,6 +51,7 @@ func resourceNames(team string, suffix string) resourceNamesType => {
 @export()
 @description('Built-in role definition IDs used by the workshop.')
 var roleIds = {
+  contributor: 'b24988ac-6180-42a0-ab88-20f7382dd24c'
   storageBlobDataContributor: 'ba92f5b4-2d11-453d-a403-e96b0029c9fe'
   storageBlobDataReader: '2a2b9908-6ea1-4ae2-8e65-a410df84e7d1'
 }

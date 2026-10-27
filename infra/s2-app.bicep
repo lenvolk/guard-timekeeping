@@ -91,6 +91,7 @@ module appTier 'modules/app-tier.bicep' = {
     appInsightsName: monitoring.outputs.appInsightsName
     logAnalyticsName: monitoring.outputs.logAnalyticsName
     postgresHost: postgresServer.properties.fullyQualifiedDomainName
+    postgresServerId: postgresServer.id
     postgresDatabase: names.postgresDatabase
     storageBlobUrl: storage.properties.primaryEndpoints.blob
     signatureContainer: names.signatureContainer

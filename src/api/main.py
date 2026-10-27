@@ -22,6 +22,7 @@ from pydantic import BaseModel
 from starlette.concurrency import run_in_threadpool
 
 import db
+import server
 import signatures
 
 logging.basicConfig(level=logging.INFO)
@@ -79,7 +80,10 @@ def database() -> Iterator[psycopg.Connection]:
         raise HTTPException(status_code=503, detail="Signature storage is not available. Try again shortly.")
     except (psycopg.OperationalError, ClientAuthenticationError):
         log.exception("Database call failed.")
-        raise HTTPException(status_code=503, detail="The database is not available. Try again shortly.")
+        raise HTTPException(
+            status_code=503,
+            detail="The database is not available. Open the Status page to check it, and start it there if it is stopped.",
+        )
 
 
 def conflict(message: str) -> HTTPException:
@@ -218,6 +222,12 @@ def status():
         log.exception("Status check could not reach the database.")
         result["database"] = "error"
         result["errors"]["database"] = type(exc).__name__
+        # Tell a stopped server apart from other database problems.
+        try:
+            result["database_server"] = server.get_state()
+        except server.ServerControlUnavailable as state_exc:
+            result["database_server"] = "Unknown"
+            result["errors"]["database_server"] = str(state_exc)
     try:
         signatures.check()
     except signatures.StorageUnavailable as exc:
@@ -463,6 +473,15 @@ def event_signature(event_id: int):
     if image is None:
         raise HTTPException(status_code=404, detail=f"The signature for event {event_id} is missing from storage.")
     return Response(content=image, media_type="image/png", headers={"Cache-Control": "private, max-age=3600"})
+
+
+@app.post("/admin/start-database")
+def start_database():
+    """Start the PostgreSQL server if it is stopped. Azure takes about 2 minutes."""
+    try:
+        return {"database_server": server.start()}
+    except server.ServerControlUnavailable as exc:
+        raise HTTPException(status_code=503, detail=str(exc))
 
 
 @app.post("/admin/reset")

@@ -20,10 +20,17 @@ stores the signatures in Blob Storage. The app uses synthetic data only.
 | Network | `rg-<team>-app` | VNet, blob private endpoint, private DNS zone | The API joins the VNet and reaches storage privately |
 
 The API's managed identity is the PostgreSQL admin and has the Storage Blob Data
-Contributor role. No password or storage key exists anywhere. The API reaches Blob
+Contributor role. It also has Contributor on the PostgreSQL server only, so the
+Status page can start the server when it is stopped. No password or storage key
+exists anywhere. The API reaches Blob
 Storage through a private endpoint, so the app still works when a subscription
 policy turns off public network access on storage accounts. Full private
 networking is left for production.
+
+> Some subscriptions run automation that stops idle PostgreSQL servers overnight.
+> If every page says *The database is not available*, open **Status** and select
+> **Start database**. The page turns green by itself in about 2 minutes.
+> `deploy.ps1` also starts a stopped server before it runs S1, S2 or S3.
 
 The **runner** in the diagram is you: the account signed in to the Azure CLI that
 runs `deploy.ps1`. S2 gives that account Storage Blob Data Reader so you can open
@@ -176,6 +183,8 @@ This workshop takes shortcuts. Production needs at least:
 - scoped roles per resource group instead of one subscription Owner
 - Entra sign-in instead of picking a persona
 - no Reset page: anyone on the site can wipe all data with it
+- no Start database button, and a custom role that can only start the server
+  instead of Contributor on it
 - legally approved e-signatures with retention and immutable storage
 - least-privilege database roles and versioned migrations
 - CI/CD with protected environments instead of laptop prompts

@@ -1,5 +1,6 @@
 // Runs from S2 in rg-<team>-data. Makes the API's managed identity the PostgreSQL
-// Microsoft Entra administrator and grants the storage roles:
+// Microsoft Entra administrator and grants these roles:
+//   API identity -> Contributor on the PostgreSQL server only (the Status page can start a stopped server)
 //   API identity -> Storage Blob Data Contributor (writes and reads signatures)
 //   Runner       -> Storage Blob Data Reader (views signatures in the portal)
 
@@ -42,6 +43,19 @@ resource postgresAdmin 'Microsoft.DBforPostgreSQL/flexibleServers/administrators
 }
 
 // guid() of scope, principal and role keeps each name stable, so a rerun changes nothing.
+// No built-in role allows only starting a server. Contributor is scoped to this one
+// server, and the API is already its database administrator.
+resource apiServerContributor 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  scope: server
+  name: guid(server.id, apiPrincipalId, roleIds.contributor)
+  properties: {
+    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', roleIds.contributor)
+    principalId: apiPrincipalId
+    principalType: 'ServicePrincipal'
+    description: 'Timekeeping API starts the PostgreSQL server from the Status page when it is stopped.'
+  }
+}
+
 resource apiBlobContributor 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
   scope: storage
   name: guid(storage.id, apiPrincipalId, roleIds.storageBlobDataContributor)
@@ -65,5 +79,6 @@ resource runnerBlobReader 'Microsoft.Authorization/roleAssignments@2022-04-01' =
 }
 
 output postgresAdminName string = postgresAdmin.properties.principalName
+output apiServerRoleAssignmentId string = apiServerContributor.id
 output apiRoleAssignmentId string = apiBlobContributor.id
 output runnerRoleAssignmentId string = runnerBlobReader.id

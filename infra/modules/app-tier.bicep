@@ -22,6 +22,9 @@ param logAnalyticsName string
 @description('Fully qualified PostgreSQL server name.')
 param postgresHost string
 
+@description('Resource ID of the PostgreSQL server. The API reads its state and starts it when stopped.')
+param postgresServerId string
+
 param postgresDatabase string
 
 @description('Blob endpoint of the signature storage account, for example https://<account>.blob.core.windows.net/')
@@ -88,6 +91,10 @@ resource api 'Microsoft.Web/sites@2024-11-01' = {
         {
           name: 'PGHOST'
           value: postgresHost
+        }
+        {
+          name: 'POSTGRES_SERVER_ID'
+          value: postgresServerId
         }
         {
           name: 'PGPORT'
