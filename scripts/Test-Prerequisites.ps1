@@ -277,7 +277,7 @@ foreach ($provider in $RequiredProviders) {
 try {
     $offer = Get-PostgresOffer (Invoke-AzJson postgres flexible-server list-skus --location $Location -o json)
     if ($offer -eq 'Restricted') {
-        Write-Result FAIL ('PostgreSQL Flexible Server does not accept new servers in {0} for this subscription. Run scripts\Test-Prerequisites.ps1 without -Location to see which regions do.' -f $Location)
+        Write-Result FAIL ('PostgreSQL Flexible Server does not accept new servers in {0} for this subscription. Pick another region (run the script without -Location to see a list), or request region access: see "Prepare a region" in README.md.' -f $Location)
     }
     elseif ($offer -eq 'Ok') {
         Write-Result PASS ('PostgreSQL Flexible Server Burstable B1ms offered in {0}' -f $Location)
@@ -320,7 +320,7 @@ try {
             Write-Result PASS ('App Service quota {0}: {1} of {2} used, {3} needed' -f $label, $usage.currentValue, $usage.limit, $TeamCount)
         }
         else {
-            Write-Result FAIL ('App Service quota {0}: {1} of {2} used, {3} needed. Request more quota or use fewer teams.' -f $label, $usage.currentValue, $usage.limit, $TeamCount)
+            Write-Result FAIL ('App Service quota {0}: {1} of {2} used, {3} needed. Pick another region, or request a B1 limit of at least {4} for {5}: see "Prepare a region" in README.md.' -f $label, $usage.currentValue, $usage.limit, $TeamCount, ([int64]$usage.currentValue + $TeamCount), $Location)
         }
     }
 }

@@ -45,6 +45,14 @@ cd guard-timekeeping
 .\deploy.ps1
 ```
 
+Run `deploy.ps1` from the repository root, not from the `scripts` folder. To skip
+the questions, pass the answers. This deploys team01 to North Central US without
+pausing:
+
+```powershell
+.\deploy.ps1 -Mode Autopilot -Team team01 -Location northcentralus
+```
+
 The script first asks for a mode:
 
 - **Human in the loop** (default) pauses after each stage. Review the results in
@@ -66,18 +74,60 @@ If a team falls behind, `.\deploy.ps1 -Team team01 -Mode Autopilot -StartAt S2`
 catches up from S2. For a hackathon, `.\scripts\Test-Prerequisites.ps1 -TeamCount 5`
 checks regional quota for five teams. Give each team its own `-Team` name.
 
-When you leave out `-Location`, both scripts list common US regions and mark which
-ones accept a new PostgreSQL server in your subscription. Some subscriptions block
-PostgreSQL in regions such as eastus and eastus2. Type a number from the list, a
-region name such as `centralus`, or the portal name such as `Central US`:
+When you leave out `-Location`, both scripts list common US regions and mark the
+ones where your subscription can deploy the workshop. A region is blocked when the
+subscription cannot create PostgreSQL there, or when its App Service B1 quota is 0.
+Type a number from the list, a region name such as `centralus`, or the portal name
+such as `Central US`:
 
 ```text
-   [1] eastus           East US            not available: this subscription cannot create PostgreSQL here
-   [2] eastus2          East US 2          not available: this subscription cannot create PostgreSQL here
+   [1] eastus           East US            blocked: this subscription cannot create PostgreSQL here
    [3] centralus        Central US         ok
+   [6] westus           West US            blocked: App Service B1 quota is 0 here
    ...
    Pick a number or type a region [centralus]:
 ```
+
+## Prepare a region
+
+The easiest fix is to pick a region marked **ok**. If you need a specific region,
+for example to stay close to the customer, unblock it a few days before the
+workshop. Each subscription and region is separate, so repeat this for every
+subscription the teams use.
+
+| Blocked because | What to request | How long |
+|---|---|---|
+| App Service B1 quota is 0 | A higher **B1** limit for that region | Usually minutes |
+| The subscription cannot create PostgreSQL | **Region access** for PostgreSQL Flexible Server | 24 to 48 hours, and can be refused where capacity is tight |
+
+**App Service B1 quota** (you need the Owner or Quota Request Operator role):
+
+1. In the [Azure portal](https://portal.azure.com), search for **Quotas** and open
+   it.
+2. Select **App Service**, then filter by your subscription and the region.
+3. Select the **B1** row and request a new limit: the current usage plus one per
+   team, for example 5 for five teams.
+
+Do not request *Total Regional VMs*. It goes up with the B1 increase.
+
+**PostgreSQL region access:**
+
+1. In the Azure portal, open **Help + support**, then **Create a support request**.
+2. For **Issue type**, pick **Service and subscription limits (quotas)**. For
+   **Quota type**, pick **Azure Database for PostgreSQL flexible server**.
+3. On **Additional details**, select **Enter details**, choose **Region access**,
+   pick the region, and enter 1 vCore per team.
+4. Submit the request. You get an email when it is approved.
+
+When the requests are approved, confirm the region is ready for all teams:
+
+```powershell
+.\scripts\Test-Prerequisites.ps1 -Location westus -TeamCount 5
+```
+
+Microsoft docs:
+[App Service quota](https://learn.microsoft.com/troubleshoot/azure/app-service/troubleshoot-non-zone-redundant-quota-requests),
+[PostgreSQL quota and region access](https://learn.microsoft.com/azure/postgresql/configure-maintain/how-to-request-quota-increase).
 
 ## Prerequisites
 
@@ -85,6 +135,8 @@ region name such as `centralus`, or the portal name such as `Central US`:
 - [Azure CLI](https://learn.microsoft.com/cli/azure/install-azure-cli) with Bicep (`az bicep install`)
 - Owner on the Azure subscription, or Contributor plus Role Based Access Control
   Administrator. The deployment creates role assignments.
+- A region where the subscription can create PostgreSQL and has App Service B1
+  quota. The scripts show which regions qualify. See [Prepare a region](#prepare-a-region).
 - git, or this repository downloaded as a zip
 
 ## Try the app

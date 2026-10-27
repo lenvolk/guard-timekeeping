@@ -39,50 +39,74 @@ function Get-PostgresOffer {
     return 'NoB1ms'
 }
 
+# Reads Microsoft.Web usages for one region. App Service needs both the B1 limit and
+# the Total Regional VMs limit to have room. Returns Ok, NoQuota or Unknown. Unknown
+# means B1 is not listed, which Microsoft documents as "try the deployment first".
+function Get-AppServiceQuota {
+    param($Usages, [int]$Needed = 1)
+    $b1 = @($Usages.value) | Where-Object { $_.name.value -eq 'B1' } | Select-Object -First 1
+    $total = @($Usages.value) | Where-Object { $_.name.value -eq '*' } | Select-Object -First 1
+    foreach ($usage in @($b1, $total)) {
+        if ($usage -and ([int64]$usage.limit - [int64]$usage.currentValue) -lt $Needed) { return 'NoQuota' }
+    }
+    if (-not $b1) { return 'Unknown' }
+    return 'Ok'
+}
+
 # Checks the regions in parallel, because each lookup takes several seconds.
-# Returns a hashtable of region name to Ok, Restricted, NoB1ms or Unknown.
-function Get-PostgresRegionStatus {
+# Returns a hashtable of region name to Ok, Restricted, NoB1ms, NoAppServiceQuota or Unknown.
+function Get-RegionReadiness {
     param([string[]]$RegionNames, [string]$SubscriptionId)
     $jobs = @{}
     foreach ($name in $RegionNames) {
         $jobs[$name] = Start-Job -ArgumentList $name, $SubscriptionId -ScriptBlock {
             param($location, $subscription)
-            $text = & az postgres flexible-server list-skus --location $location --subscription $subscription -o json 2>$null
-            if ($LASTEXITCODE -eq 0) { $text -join "`n" }
+            $postgres = & az postgres flexible-server list-skus --location $location --subscription $subscription -o json 2>$null
+            $postgresOk = ($LASTEXITCODE -eq 0)
+            $web = & az rest --method get --url ('/subscriptions/{0}/providers/Microsoft.Web/locations/{1}/usages?api-version=2024-11-01' -f $subscription, $location) -o json 2>$null
+            $webOk = ($LASTEXITCODE -eq 0)
+            [pscustomobject]@{
+                Postgres = if ($postgresOk) { $postgres -join "`n" } else { '' }
+                Web      = if ($webOk) { $web -join "`n" } else { '' }
+            }
         }
     }
     $null = $jobs.Values | Wait-Job -Timeout 120
     $status = @{}
     foreach ($name in $RegionNames) {
         $job = $jobs[$name]
-        $status[$name] = 'Unknown'
+        $postgres = 'Unknown'
+        $appService = 'Unknown'
         if ($job.State -eq 'Completed') {
-            $text = (Receive-Job $job) -join "`n"
-            try {
-                if ($text) { $status[$name] = Get-PostgresOffer ($text | ConvertFrom-Json) }
-            }
-            catch { }
+            $result = Receive-Job $job | Select-Object -Last 1
+            try { if ($result.Postgres) { $postgres = Get-PostgresOffer ($result.Postgres | ConvertFrom-Json) } } catch { }
+            try { if ($result.Web) { $appService = Get-AppServiceQuota ($result.Web | ConvertFrom-Json) } } catch { }
         }
         Remove-Job $job -Force
+        if ($postgres -eq 'Restricted' -or $postgres -eq 'NoB1ms') { $status[$name] = $postgres }
+        elseif ($appService -eq 'NoQuota') { $status[$name] = 'NoAppServiceQuota' }
+        elseif ($postgres -eq 'Unknown' -or $appService -eq 'Unknown') { $status[$name] = 'Unknown' }
+        else { $status[$name] = 'Ok' }
     }
     return $status
 }
 
-# Shows the suggested regions with whether PostgreSQL accepts new servers there,
-# then asks for a number, a region name or a display name. Returns the region name.
+# Shows the suggested regions and whether this subscription can deploy the workshop
+# there, then asks for a number, a region name or a display name. Returns the region name.
 function Read-Region {
     param([string]$Prompt, [string]$Default, [string]$SubscriptionId, $Regions)
     $menu = @($SuggestedRegions | Where-Object { Resolve-RegionName $_ $Regions })
     if ($Default -and $menu -notcontains $Default -and (Resolve-RegionName $Default $Regions)) { $menu += $Default }
 
     Write-Host ''
-    Write-Host ('   Checking which regions accept a new PostgreSQL server in this subscription ({0} regions, about 15 seconds)...' -f $menu.Count) -ForegroundColor Gray
-    $status = Get-PostgresRegionStatus $menu $SubscriptionId
+    Write-Host ('   Checking PostgreSQL access and App Service quota in {0} regions for this subscription (about 20 seconds)...' -f $menu.Count) -ForegroundColor Gray
+    $status = Get-RegionReadiness $menu $SubscriptionId
     $labels = @{
-        Ok         = 'ok'
-        Restricted = 'not available: this subscription cannot create PostgreSQL here'
-        NoB1ms     = 'not available: no PostgreSQL B1ms size here'
-        Unknown    = 'unknown: the check did not answer, the deployment may still work'
+        Ok                = 'ok'
+        Restricted        = 'blocked: this subscription cannot create PostgreSQL here'
+        NoB1ms            = 'blocked: no PostgreSQL B1ms size here'
+        NoAppServiceQuota = 'blocked: App Service B1 quota is 0 here'
+        Unknown           = 'probably ok: one check did not answer, the deployment may still work'
     }
     if ($status[$Default] -ne 'Ok') {
         $firstOk = $menu | Where-Object { $status[$_] -eq 'Ok' } | Select-Object -First 1
@@ -98,6 +122,7 @@ function Read-Region {
         Write-Host ('   [{0}] {1,-16} {2,-18} {3}' -f ($i + 1), $name, $display, $labels[$status[$name]]) -ForegroundColor $color
     }
     Write-Host '   You can also type any other region name, for example canadacentral.' -ForegroundColor Gray
+    Write-Host '   To unblock a region, see "Prepare a region" in README.md.' -ForegroundColor Gray
 
     while ($true) {
         $answer = "$(Read-Host ('   Pick a number or type a region [{0}]' -f $Default))".Trim()
