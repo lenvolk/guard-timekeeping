@@ -204,11 +204,14 @@ message, which also stops double submissions.
 API: `GET /healthz`, `GET /status` (database, storage and seed counts),
 `GET /sites`, `GET /sites/{id}/board`, `GET /guards/{id}`, `POST /shifts`,
 `POST /shifts/{id}/end`, `POST /assignments`, `POST /assignments/{id}/relieve`,
-`GET /events?site_id=`, `GET /events/{id}/signature` (streams the PNG).
+`GET /events?site_id=`, `GET /events/{id}/signature` (streams the PNG),
+`POST /admin/reset` (deletes all activity and signatures, then loads the seed data
+again).
 
 Web pages: `/` (pick site and guard), `/guard/{id}`, `/supervisor/{site_id}`,
 `/signature/{event_id}` (proxies the PNG from the API), `/status` (shows whether
-the API, database and storage respond, and the seed counts).
+the API, database and storage respond, and the seed counts), `/reset` (asks for
+confirmation, then resets the demo data so the walkthrough can run again).
 
 ### Out of scope
 

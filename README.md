@@ -93,7 +93,8 @@ open the storage account in the Azure portal, then the `signatures` container, t
 see the same PNG files.
 
 [demo.md](demo.md) walks through these steps one click at a time and explains what
-each one proves.
+each one proves. To run them again, click **Reset** in the top bar. It deletes all
+activity and signatures and loads the synthetic data again.
 
 ## Clean up
 
@@ -113,6 +114,7 @@ This workshop takes shortcuts. Production needs at least:
 - a VNet with private endpoints for the database and API (storage already has one)
 - scoped roles per resource group instead of one subscription Owner
 - Entra sign-in instead of picking a persona
+- no Reset page: anyone on the site can wipe all data with it
 - legally approved e-signatures with retention and immutable storage
 - least-privilege database roles and versioned migrations
 - CI/CD with protected environments instead of laptop prompts

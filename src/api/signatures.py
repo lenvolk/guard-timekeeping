@@ -113,3 +113,17 @@ def check() -> None:
             break
     except AzureError as exc:
         raise StorageUnavailable(type(exc).__name__) from exc
+
+
+def delete_all() -> int:
+    """Delete every signature in the container and return how many. Raises StorageUnavailable."""
+    container = _get_container()
+    deleted = 0
+    try:
+        for blob in container.list_blobs():
+            container.delete_blob(blob.name)
+            deleted += 1
+    except AzureError as exc:
+        log.exception("Deleting signatures failed after %s blobs.", deleted)
+        raise StorageUnavailable(type(exc).__name__) from exc
+    return deleted

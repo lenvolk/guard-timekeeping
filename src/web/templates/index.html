@@ -1,6 +1,7 @@
 {% extends "base.html" %}
 {% block content %}
 <h1>Pick a site and a guard</h1>
+{% if notice %}<p class="flash notice" role="status">{{ notice }}</p>{% endif %}
 <p class="hint">There is no sign-in. Pick any guard to act as that person.</p>
 {% for board in boards %}
 <section class="card site" data-site-id="{{ board.site.id }}">

@@ -463,3 +463,23 @@ def event_signature(event_id: int):
     if image is None:
         raise HTTPException(status_code=404, detail=f"The signature for event {event_id} is missing from storage.")
     return Response(content=image, media_type="image/png", headers={"Cache-Control": "private, max-age=3600"})
+
+
+@app.post("/admin/reset")
+def reset_demo_data():
+    """Put the demo back to its seeded state: database rows first, then signature files.
+
+    The database goes first so no event ever points at a deleted signature. If storage
+    then fails, the old files stay behind unused and the response says so.
+    """
+    try:
+        result = db.reset()
+    except (psycopg.Error, ClientAuthenticationError):
+        log.exception("Reset could not reach the database.")
+        raise HTTPException(status_code=503, detail="The database is not available. Try again shortly.")
+    try:
+        result["signatures_deleted"] = signatures.delete_all()
+    except signatures.StorageUnavailable as exc:
+        result["signatures_deleted"] = None
+        result["storage_warning"] = f"The data was reset, but old signature files could not be deleted ({exc})."
+    return result

@@ -80,3 +80,31 @@ def ensure_setup() -> None:
                 conn.commit()
         _setup_done = True
         log.info("Database setup complete.")
+
+
+def reset() -> dict:
+    """Delete every row and load the seed data again, as on a new deployment.
+
+    Runs in one transaction under the setup lock, so a page either sees the old data
+    or the new seed data. Sites, posts and guards get IDs from 1 again, so links such
+    as /supervisor/1 keep working. Event IDs keep counting, because browsers cache
+    signature images by event ID.
+    """
+    ensure_setup()
+    with connect() as conn:
+        conn.execute("SELECT pg_advisory_lock(%s)", (SETUP_LOCK_KEY,))
+        try:
+            events = conn.execute("SELECT count(*) AS n FROM events").fetchone()["n"]
+            conn.execute("TRUNCATE events, post_assignments, shifts, guards, posts, sites")
+            for table in ("sites", "posts", "guards"):
+                conn.execute(f"ALTER TABLE {table} ALTER COLUMN id RESTART")
+            seed.load(conn)
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            conn.execute("SELECT pg_advisory_unlock(%s)", (SETUP_LOCK_KEY,))
+            conn.commit()
+    log.info("Demo data reset. %s events removed.", events)
+    return {"events_removed": events}

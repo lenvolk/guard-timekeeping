@@ -1,7 +1,20 @@
 # Demo: test the timekeeping app
 
-Use this after `deploy.ps1` finishes S3. It shows three ways to check that the app
+Use this after `deploy.ps1` has finished. It shows three ways to check that the app
 works, from fully automatic to clicking through it yourself. Allow about 15 minutes.
+
+`deploy.ps1` works in numbered stages, and the console prints a header for each
+one, for example `=== S3 Code ===`. This guide refers to them by number:
+
+| Stage | What it does |
+|---|---|
+| S0 | Checks your tools, sign-in, region and quota. Deploys nothing |
+| S1 | Creates `rg-<team>-data`: PostgreSQL and the storage account |
+| S2 | Creates `rg-<team>-app`: the web and API apps, the VNet, the private endpoint and the role assignments |
+| S3 | Uploads the app code, runs the end-to-end checks and prints the website address |
+| S4 | Cleanup. Deletes both resource groups. It runs only when you ask for it |
+
+`-StartAt` reruns from one stage, for example `.\deploy.ps1 -Team team01 -StartAt S2`.
 
 ![Three ways to test: automatic checks, the status page, and a five-step walkthrough in the browser. Each signed step saves an event row in PostgreSQL and a PNG in Blob Storage, and the supervisor board shows both](docs/diagrams/test-flow.excalidraw.svg)
 
@@ -18,7 +31,7 @@ works, from fully automatic to clicking through it yourself. Allow about 15 minu
 
 ## Find your web address
 
-S3 prints it at the end, for example
+S3 prints it at the end of the deployment, for example
 `Website: https://app-team01-web-abcde.azurewebsites.net`. If you lost it, run:
 
 ```powershell
@@ -73,7 +86,8 @@ button stays grey until you sign.
 
 ### First walkthrough on a new deployment
 
-Use **Riverside Office Park**. After a new deployment the home page shows:
+Use **Riverside Office Park**. After a new deployment, or after **Reset**, the home
+page shows:
 
 | Guard | Badge |
 |---|---|
@@ -104,10 +118,24 @@ Lobby Desk is the vacant post.
    You see: Lobby Desk is covered by Marcus Ferrin, Jordan Avila is off shift, and
    the recent events have signature thumbnails.
 
-### If someone already tested this deployment
+### Start over with Reset
 
 A hand-over keeps a post covered, so after the first walkthrough there is no
-vacant post. Skip *Take a post* and use any site:
+vacant post. To run the walkthrough again:
+
+1. Click **Reset** in the top bar, next to *Sites and guards* and *Status*.
+2. Read the page, then click **Reset demo data**.
+   You see: the home page with *Demo data reset.* Every badge is back to the table
+   above, and `/status` shows 0 signatures.
+
+Reset deletes every shift, assignment and event at both sites, and every signature
+PNG in Blob Storage. Then it loads the synthetic guards again. It affects everyone
+who uses this deployment and cannot be undone.
+
+### Without Reset
+
+If others are still testing and you do not want to reset, skip *Take a post* and
+use any site:
 
 1. Find a guard with an **On Post** badge. This is the guard who leaves.
 2. Pick an **Off Shift** guard at the same site and start their shift (step 1
@@ -160,7 +188,8 @@ To watch requests as you click, open `rg-<team>-app`, then `appi-<team>`, then
 | `/status` says storage **error** | The storage role is still being applied, or the private endpoint is missing | Wait 5 minutes. If it stays, run `.\deploy.ps1 -Team <team> -StartAt S2` |
 | `/status` says database **error** | The API identity is not the PostgreSQL admin yet | Run `.\deploy.ps1 -Team <team> -StartAt S2` |
 | The page has no styling, or the signature box does not draw | The browser blocked the stylesheet or script | Run `.\deploy.ps1 -Team <team> -StartAt S3` to deploy the current code |
-| Lobby Desk is not vacant | Someone already did the walkthrough | Follow *If someone already tested this deployment* in part C |
+| Lobby Desk is not vacant | Someone already did the walkthrough | Click **Reset**, or follow *Without Reset* in part C |
+| **Reset** says old signature files could not be deleted | The API could not reach Blob Storage | The data was reset anyway. Check `/status`, then click **Reset** again |
 | *"… is not on shift."* when you hand over a post | The relief guard is Off Shift | Start the relief guard's shift first, so their badge is **Available** |
 
 ## Let Copilot drive the browser (optional)

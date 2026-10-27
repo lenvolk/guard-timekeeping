@@ -33,7 +33,10 @@ NOTICES = {
     "post-taken": "Post taken.",
     "relieved": "Post handed over to the relief guard.",
     "shift-ended": "Shift ended.",
+    "reset": "Demo data reset. Every guard and post is back to where a new deployment starts.",
 }
+# Deleting many signature files can take longer than a normal page.
+RESET_TIMEOUT_SECONDS = 120
 
 app = FastAPI(title="Timekeeping", docs_url=None, redoc_url=None, openapi_url=None)
 app.mount("/static", StaticFiles(directory=BASE_DIR / "static"), name="static")
@@ -59,10 +62,11 @@ class ApiError(Exception):
         self.detail = detail
 
 
-def call_api(method: str, path: str, payload: dict | None = None, params: dict | None = None):
+def call_api(method: str, path: str, payload: dict | None = None, params: dict | None = None,
+             timeout: int = API_TIMEOUT_SECONDS):
     try:
         response = session.request(
-            method, f"{API_BASE_URL}{path}", json=payload, params=params, timeout=API_TIMEOUT_SECONDS
+            method, f"{API_BASE_URL}{path}", json=payload, params=params, timeout=timeout
         )
     except requests.RequestException as exc:
         log.warning("API call %s %s failed: %s", method, path, type(exc).__name__)
@@ -123,13 +127,14 @@ def healthz():
 
 
 @app.get("/", response_class=HTMLResponse)
-def index(request: Request):
+def index(request: Request, notice: str | None = None):
     try:
         sites = call_api("GET", "/sites")
         boards = [call_api("GET", f"/sites/{site['id']}/board") for site in sites]
     except ApiError as exc:
         return error_page(request, exc)
-    return render(request, "index.html", {"title": "Pick a site and guard", "boards": boards})
+    return render(request, "index.html", {"title": "Pick a site and guard", "boards": boards,
+                                          "notice": NOTICES.get(notice or "")})
 
 
 @app.get("/guard/{guard_id}", response_class=HTMLResponse)
@@ -201,6 +206,22 @@ def supervisor(request: Request, site_id: int):
     context = {"title": f"Supervisor board: {board['site']['name']}", "board": board,
                "tz": board["site"]["time_zone"], "refresh_seconds": 10}
     return render(request, "supervisor.html", context)
+
+
+@app.get("/reset", response_class=HTMLResponse)
+def reset_page(request: Request):
+    return render(request, "reset.html", {"title": "Reset demo data"})
+
+
+@app.post("/reset")
+def reset(request: Request):
+    try:
+        result = call_api("POST", "/admin/reset", timeout=RESET_TIMEOUT_SECONDS)
+    except ApiError as exc:
+        return render(request, "reset.html", {"title": "Reset demo data", "error": exc.detail}, 502)
+    if result.get("storage_warning"):
+        return render(request, "reset.html", {"title": "Reset demo data", "warning": result["storage_warning"]})
+    return RedirectResponse("/?notice=reset", status_code=303)
 
 
 @app.get("/status", response_class=HTMLResponse)

@@ -109,6 +109,7 @@ button, .button {
   justify-self: start;
 }
 button.secondary, .button.secondary { background: var(--surface); color: var(--accent); }
+button.danger { background: var(--bad); border-color: var(--bad); }
 
 .flash { padding: 0.6rem 0.9rem; border-radius: 6px; font-weight: 600; }
 .flash.notice { background: #e3f9e5; border: 1px solid #8bd49a; color: #0e5a2c; }
